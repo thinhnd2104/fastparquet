@@ -4,9 +4,17 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+
 import array
-import numba
+
 import numpy as np
+
+from packaging import version
+import numba
+if version.parse(numba.__version__) < version.parse("0.49"):
+    from numba import jitclass
+else:
+    from numba.experimental import jitclass
 
 from .speedups import unpack_byte_array
 from .thrift_structures import parquet_thrift
@@ -219,9 +227,9 @@ class NumpyIO(object):  # pragma: no cover
         return self.data[:self.loc]
 
 spec8 = [('data', numba.uint8[:]), ('loc', numba.int64), ('len', numba.int64)]
-Numpy8 = numba.jitclass(spec8)(NumpyIO)
+Numpy8 = jitclass(spec8)(NumpyIO)
 spec32 = [('data', numba.uint32[:]), ('loc', numba.int64), ('len', numba.int64)]
-Numpy32 = numba.jitclass(spec32)(NumpyIO)
+Numpy32 = jitclass(spec32)(NumpyIO)
 
 
 def _assemble_objects(assign, defi, rep, val, dic, d, null, null_val, max_defi, prev_i):
