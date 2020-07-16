@@ -156,8 +156,8 @@ def read_dictionary_page(file_obj, schema_helper, page_header, column_metadata):
     """
     raw_bytes = _read_page(file_obj, page_header, column_metadata)
     if column_metadata.type == parquet_thrift.Type.BYTE_ARRAY:
-        values = unpack_byte_array(raw_bytes,
-                                   page_header.dictionary_page_header.num_values)
+        values = np.array(unpack_byte_array(raw_bytes,
+                          page_header.dictionary_page_header.num_values), dtype='object')
     else:
         width = schema_helper.schema_element(
             column_metadata.path_in_schema).type_length
@@ -196,7 +196,7 @@ def read_col(column, schema_helper, infile, use_cat=False,
 
     dic = None
     if ph.type == parquet_thrift.PageType.DICTIONARY_PAGE:
-        dic = np.array(read_dictionary_page(infile, schema_helper, ph, cmd))
+        dic = read_dictionary_page(infile, schema_helper, ph, cmd)
         ph = read_thrift(infile, parquet_thrift.PageHeader)
         dic = convert(dic, se)
     if grab_dict:

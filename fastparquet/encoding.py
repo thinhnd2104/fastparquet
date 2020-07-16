@@ -226,6 +226,7 @@ class NumpyIO(object):  # pragma: no cover
         """
         return self.data[:self.loc]
 
+
 spec8 = [('data', numba.uint8[:]), ('loc', numba.int64), ('len', numba.int64)]
 Numpy8 = jitclass(spec8)(NumpyIO)
 spec32 = [('data', numba.uint32[:]), ('loc', numba.int64), ('len', numba.int64)]
