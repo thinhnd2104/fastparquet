@@ -66,7 +66,7 @@ def test_hybrid_extra_bytes():
                 break
             (data, width, length, res) = eval(l)
             if length is not None:
-                data = data + b'extra bytes'
+                data += b'extra bytes'
                 length += len(b'extra bytes')
             else:
                 continue
