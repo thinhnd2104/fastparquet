@@ -28,6 +28,7 @@ from .util import (default_open, default_mkdirs,
                    check_column_names, metadata_from_many, created_by,
                    get_column_metadata)
 from .speedups import array_encode_utf8, pack_byte_array
+from decimal import Decimal
 
 MARKER = b'PAR1'
 NaT = np.timedelta64(None).tobytes()  # require numpy version >= 1.7
@@ -121,9 +122,12 @@ def find_type(data, fixed_text=None, object_encoding=None, times='int64'):
         elif object_encoding == 'float':
             type, converted_type, width = (parquet_thrift.Type.DOUBLE, None,
                                            64)
+        elif object_encoding == 'decimal':
+            type, converted_type, width = (parquet_thrift.Type.DOUBLE, None,
+                                           64)
         else:
             raise ValueError('Object encoding (%s) not one of '
-                             'infer|utf8|bytes|json|bson|bool|int|int32|float' %
+                             'infer|utf8|bytes|json|bson|bool|int|int32|float|decimal' %
                              object_encoding)
         if fixed_text:
             width = fixed_text
@@ -173,6 +177,8 @@ def convert(data, se):
         try:
             if converted_type == parquet_thrift.ConvertedType.UTF8:
                 out = array_encode_utf8(data)
+            elif converted_type == parquet_thrift.ConvertedType.DECIMAL:
+                out = data.values.astype(np.float64, copy=False)
             elif converted_type is None:
                 if type in revmap:
                     out = data.values.astype(revmap[type], copy=False)
@@ -227,6 +233,8 @@ def infer_object_encoding(data):
         return 'json'
     elif all(isinstance(i, bool) for i in head):
         return 'bool'
+    elif all(isinstance(i, Decimal) for i in head):
+        return 'decimal'
     elif all(isinstance(i, integer_types) for i in head):
         return 'int'
     elif all(isinstance(i, float) or isinstance(i, np.floating)
@@ -842,10 +850,11 @@ def write(filename, data, row_group_offsets=50000000,
         and the schema must match the input data.
     object_encoding: str or {col: type}
         For object columns, this gives the data type, so that the values can
-        be encoded to bytes. Possible values are bytes|utf8|json|bson|bool|int|int32,
+        be encoded to bytes. Possible values are bytes|utf8|json|bson|bool|int|int32|decimal,
         where bytes is assumed if not specified (i.e., no conversion). The
         special value 'infer' will cause the type to be guessed from the first
-        ten non-null values.
+        ten non-null values. The decimal.Decimal type is a valid choice, but will
+        result in float encoding with possible loss of accuracy.
     times: 'int64' (default), or 'int96':
         In "int64" mode, datetimes are written as 8-byte integers, us
         resolution; in "int96" mode, they are written as 12-byte blocks, with
