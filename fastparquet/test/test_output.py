@@ -14,9 +14,7 @@ from pandas.api.types import CategoricalDtype
 import pytest
 
 from fastparquet.util import default_mkdirs
-from fastparquet.test.util import s3, tempdir, sql
-
-TEST_DATA = "test-data"
+from fastparquet.test.util import s3, tempdir, sql, TEST_DATA
 
 
 def test_uvarint():
