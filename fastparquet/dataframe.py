@@ -163,31 +163,33 @@ def empty(types, size, cats=None, cols=None, index_types=None, index_names=None,
 
     axes = [df._data.axes[0], index]
 
-    # allocate and create blocks
-    blocks = []
-    for block in df._data.blocks:
-        if block.is_categorical:
-            categories = block.values.categories
-            code = np.zeros(shape=size, dtype=block.values.codes.dtype)
-            values = Categorical(values=code, categories=categories,
-                                 fastpath=True)
-            new_block = block.make_block_same_class(values=values)
-        elif getattr(block.dtype, 'tz', None):
-            new_shape = (size, )
-            values = np.empty(shape=new_shape, dtype='M8[ns]')
-            new_block = block.make_block_same_class(
-                type(block.values)(values, dtype=block.values.dtype)
-            )
-        else:
-            new_shape = (block.values.shape[0], size)
-            values = np.empty(shape=new_shape, dtype=block.values.dtype)
-            new_block = block.make_block_same_class(values=values)
+    # Patch our blocks with desired-length arrays.  Kids: don't try this at home.
+    mgr = df._data
+    for block in mgr.blocks:
+        bvalues = block.values
+        shape = list(bvalues.shape)
+        shape[-1] = size
 
-        blocks.append(new_block)
+        if isinstance(bvalues, Categorical):
+            categories = bvalues.categories
+            code = np.zeros(shape=shape, dtype=bvalues.codes.dtype)
+
+            values = Categorical(values=code, dtype=bvalues.dtype,
+                                 fastpath=True)
+
+        elif getattr(bvalues.dtype, 'tz', None):
+            values = np.empty(shape=shape, dtype='M8[ns]')
+            values = type(bvalues)(values, dtype=bvalues.dtype)
+        else:
+            # Note: this will break on any ExtensionDtype other than
+            #  Categorical and DatetimeTZ
+            values = np.empty(shape=shape, dtype=bvalues.dtype)
+
+        block.values = values
+
+    mgr.axes[-1] = index
 
     # create block manager
-    df = DataFrame(BlockManager(blocks, axes))
-
     # create views
     for block in df._data.blocks:
         dtype = block.dtype
