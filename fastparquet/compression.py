@@ -1,5 +1,5 @@
 
-import gzip
+import cramjam
 from .thrift_structures import parquet_thrift
 
 # TODO: use stream/direct-to-buffer conversions instead of memcopy
@@ -16,24 +16,23 @@ COMPRESSION_LEVEL = 6
 
 
 def gzip_compress_v3(data, compresslevel=COMPRESSION_LEVEL):
-    return gzip.compress(data, compresslevel=compresslevel)
+    return cramjam.gzip.compress(data, level=compresslevel)
 
 
 def gzip_decompress(data, uncompressed_size):
-    return gzip.decompress(data)
+    return cramjam.gzip.decompress(data, output_len=uncompressed_size)
 
 
 compressions['GZIP'] = gzip_compress_v3
 decompressions['GZIP'] = gzip_decompress
 
-try:
-    import snappy
-    def snappy_decompress(data, uncompressed_size):
-        return snappy.decompress(data)
-    compressions['SNAPPY'] = snappy.compress
-    decompressions['SNAPPY'] = snappy_decompress
-except ImportError:
-    pass
+
+def snappy_decompress(data, uncompressed_size):
+    return cramjam.snappy.decompress_raw(data)
+
+
+compressions['SNAPPY'] = cramjam.snappy.compress_raw
+decompressions['SNAPPY'] = snappy_decompress
 try:
     import lzo
     def lzo_decompress(data, uncompressed_size):
@@ -42,51 +41,24 @@ try:
     decompressions['LZO'] = lzo_decompress
 except ImportError:
     pass
-try:
-    import brotli
-    def brotli_decompress(data, uncompressed_size):
-        return brotli.decompress(data)
-    compressions['BROTLI'] = brotli.compress
-    decompressions['BROTLI'] = brotli_decompress
-except ImportError:
-    pass
-try:
-    import lz4.block
-    def lz4_compress(data, **kwargs):
-        kwargs['store_size'] = False
-        return lz4.block.compress(data, **kwargs)
-    def lz4_decompress(data, uncompressed_size):
-        return lz4.block.decompress(data, uncompressed_size=uncompressed_size)
-    compressions['LZ4'] = lz4_compress
-    decompressions['LZ4'] = lz4_decompress
-except ImportError:
-    pass
-try:
-    import zstandard
-    def zstd_compress(data, **kwargs):
-        kwargs['write_content_size'] = False
-        cctx = zstandard.ZstdCompressor(**kwargs)
-        return cctx.compress(data)
-    def zstd_decompress(data, uncompressed_size):
-        dctx = zstandard.ZstdDecompressor()
-        return dctx.decompress(data, max_output_size=uncompressed_size)
-    compressions['ZSTD'] = zstd_compress
-    decompressions['ZSTD'] = zstd_decompress
-except ImportError:
-    pass
-if 'ZSTD' not in compressions:
-    try:
-        import zstd
-        def zstd_compress(data, level=None):
-            if level is not None:
-                return zstd.compress(data, level)
-            return zstd.compress(data)
-        def zstd_decompress(data, _uncompressed_size=None):
-            return zstd.decompress(data)
-        compressions['ZSTD'] = zstd_compress
-        decompressions['ZSTD'] = zstd_decompress
-    except ImportError:
-        pass
+compressions['BROTLI'] = cramjam.brotli.compress
+decompressions['BROTLI'] = cramjam.brotli.decompress
+
+
+def lz4_compress(data, **kwargs):
+    kwargs['store_size'] = False
+    return cramjam.lz4.compress_block(data, **kwargs)
+
+
+compressions['LZ4'] = lz4_compress
+decompressions['LZ4'] = cramjam.lz4.decompress_block
+
+# LZ4 is actually LZ4 block, aka "raw", see
+# https://github.com/apache/parquet-format/commit/7f06e838cbd1b7dbd722ff2580b9c2525e37fc46
+compressions['LZ4_RAW'] = lz4_compress
+decompressions['LZ4_RAW'] = cramjam.lz4.decompress_block
+compressions['ZSTD'] = cramjam.zstd.compress
+decompressions['ZSTD'] = cramjam.zstd.decompress
 
 compressions = {k.upper(): v for k, v in compressions.items()}
 decompressions = {k.upper(): v for k, v in decompressions.items()}
@@ -118,6 +90,7 @@ def compress_data(data, compression='gzip'):
         if not isinstance(args, dict):
             raise ValueError("args dict entry is not a dict")
         return compressions[algorithm.upper()](data, **args)
+
 
 def decompress_data(data, uncompressed_size, algorithm='gzip'):
     if isinstance(algorithm, int):
