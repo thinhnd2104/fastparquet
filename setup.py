@@ -66,6 +66,7 @@ setup(
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: Implementation :: CPython',
     ],
     packages=['fastparquet'],
@@ -91,7 +92,6 @@ setup(
     ],
     long_description=(open('README.rst').read() if os.path.exists('README.rst')
                       else ''),
-    package_data={'fastparquet': ['*.thrift']},
     include_package_data=True,
     exclude_package_data={'fastparquet': ['test/*']},
     python_requires=">=3.6,",

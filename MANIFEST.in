@@ -1,7 +1,5 @@
-recursive-include fastparquet *.thrift
 recursive-include fastparquet *.py
-recursive-include fastparquet *.pyx
-recursive-include fastparquet *.c
+exclude fastparquet/*.c
 
 include setup.py
 include README.rst
