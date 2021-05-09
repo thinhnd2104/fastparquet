@@ -33,6 +33,7 @@ def test_compress_decompress_roundtrip_args_gzip():
     decompressed = bytes(decompress_data(compressed, len(data), algorithm="gzip"))
     assert data == decompressed
 
+
 def test_compress_decompress_roundtrip_args_lz4():
     pytest.importorskip('lz4')
     data = b'123' * 1000
@@ -50,6 +51,7 @@ def test_compress_decompress_roundtrip_args_lz4():
 
     decompressed = decompress_data(compressed, len(data), algorithm="lz4")
     assert data == bytes(decompressed)
+
 
 def test_compress_decompress_roundtrip_args_zstd():
     data = b'123' * 1000

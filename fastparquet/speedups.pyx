@@ -2,6 +2,8 @@
 Native accelerators for Parquet encoding and decoding.
 """
 # cython: c_string_encoding=utf8
+# cython: boundscheck=False
+# cython: wraparound=False
 
 cdef extern from "string.h":
     void *memcpy(void *dest, const void *src, size_t n)
@@ -23,14 +25,16 @@ def array_encode_utf8(inp):
     utf-8 encode all elements of a 1d ndarray of "object" dtype.
     A new ndarray of bytes objects is returned.
     """
+    # TODO: combine with pack_byte_array as is done for unpack
     cdef:
         Py_ssize_t i, n
         np.ndarray[object, ndim=1] arr
         np.ndarray[object] result
 
-    arr = np.array(inp)
+    arr = np.array(inp, copy=False)
 
-    n = len(arr)
+    n = arr.shape[0]
+    # TODO: why not inplace?
     result = np.empty(n, dtype=object)
     for i in range(n):
         # Fast utf-8 encoding, avoiding method call and codec lookup indirection
@@ -67,6 +71,7 @@ def pack_byte_array(list items):
         val = items[i]
         # `itemlen` should be >= 0, so no signed extension issues
         itemlen = PyBytes_GET_SIZE(val)
+        # TODO: (<int*> data)[0] = itemlen
         data[0] = itemlen & 0xff
         data[1] = (itemlen >> 8) & 0xff
         data[2] = (itemlen >> 16) & 0xff

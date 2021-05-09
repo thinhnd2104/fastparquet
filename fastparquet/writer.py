@@ -5,7 +5,6 @@ import struct
 import warnings
 from bisect import bisect
 
-import numba
 import numpy as np
 import pandas as pd
 from pandas.core.arrays.masked import BaseMaskedDtype
@@ -22,6 +21,8 @@ from .util import (default_open, default_mkdirs,
                    check_column_names, metadata_from_many, created_by,
                    get_column_metadata, path_string)
 from .speedups import array_encode_utf8, pack_byte_array
+from . import cencoding
+from .cencoding import NumpyIO
 from decimal import Decimal
 
 MARKER = b'PAR1'
@@ -197,6 +198,8 @@ def convert(data, se):
         if type in revmap:
             out = data.values.astype(revmap[type], copy=False)
         elif type == parquet_thrift.Type.BOOLEAN:
+            # TODO: with our own bitpack writer, no need to copy for
+            #  the padding
             padded = np.lib.pad(data.values, (0, 8 - (len(data) % 8)),
                                 'constant', constant_values=(0, 0))
             out = np.packbits(padded.reshape(-1, 8)[:, ::-1].ravel())
@@ -205,9 +208,11 @@ def convert(data, se):
     elif "S" in str(dtype)[:2] or "U" in str(dtype)[:2]:
         out = data.values
     elif dtype == "O":
+        # TODO: nullable types
         try:
             if converted_type == parquet_thrift.ConvertedType.UTF8:
                 # getattr for new pandas StringArray
+                # TODO: to bytes in one step
                 out = array_encode_utf8(data)
             elif converted_type == parquet_thrift.ConvertedType.DECIMAL:
                 out = data.values.astype(np.float64, copy=False)
@@ -215,12 +220,15 @@ def convert(data, se):
                 if type in revmap:
                     out = data.values.astype(revmap[type], copy=False)
                 elif type == parquet_thrift.Type.BOOLEAN:
+                    # TODO: with our own bitpack writer, no need to copy for
+                    #  the padding
                     padded = np.lib.pad(data.values, (0, 8 - (len(data) % 8)),
                                         'constant', constant_values=(0, 0))
                     out = np.packbits(padded.reshape(-1, 8)[:, ::-1].ravel())
                 else:
                     out = data.values
             elif converted_type == parquet_thrift.ConvertedType.JSON:
+                # TODO: avoid list, use better JSON
                 out = np.array([json.dumps(x).encode('utf8') for x in data],
                                dtype="O")
             elif converted_type == parquet_thrift.ConvertedType.BSON:
@@ -236,6 +244,7 @@ def convert(data, se):
     elif str(dtype) == "string":
         try:
             if converted_type == parquet_thrift.ConvertedType.UTF8:
+                # TODO: into bytes in one step
                 out = array_encode_utf8(data)
             elif converted_type is None:
                 out = data.values
@@ -249,15 +258,17 @@ def convert(data, se):
                              '%s' % (data.name, ct, e))
 
     elif converted_type == parquet_thrift.ConvertedType.TIMESTAMP_MICROS:
+        # TODO: shift inplace
         out = np.empty(len(data), 'int64')
         time_shift(data.values.view('int64'), out)
     elif converted_type == parquet_thrift.ConvertedType.TIME_MICROS:
+        # TODO: shift inplace
         out = np.empty(len(data), 'int64')
         time_shift(data.values.view('int64'), out)
     elif type == parquet_thrift.Type.INT96 and dtype.kind == 'M':
         ns_per_day = (24 * 3600 * 1000000000)
         day = data.values.view('int64') // ns_per_day + 2440588
-        ns = (data.values.view('int64') % ns_per_day)# - ns_per_day // 2
+        ns = (data.values.view('int64') % ns_per_day)  # - ns_per_day // 2
         out = np.empty(len(data), dtype=[('ns', 'i8'), ('day', 'i4')])
         out['ns'] = ns
         out['day'] = day
@@ -289,13 +300,12 @@ def infer_object_encoding(data):
         raise ValueError("Can't infer object conversion type: %s" % head)
 
 
-@numba.njit(nogil=True)
-def time_shift(indata, outdata, factor=1000):  # pragma: no cover
-    for i in range(len(indata)):
-        if indata[i] == nat:
-            outdata[i] = nat
-        else:
-            outdata[i] = indata[i] // factor
+def time_shift(indata, outdata, factor=1000):
+    outdata.view("int64")[:] = np.where(
+        indata.view('int64') == nat,
+        nat,
+        indata.view('int64') // factor
+    )
 
 
 def encode_plain(data, se):
@@ -307,124 +317,44 @@ def encode_plain(data, se):
         return out.tobytes()
 
 
-@numba.njit(nogil=True)
-def encode_unsigned_varint(x, o):  # pragma: no cover
-    while x > 127:
-        o.write_byte((x & 0x7F) | 0x80)
-        x >>= 7
-    o.write_byte(x)
-
-
-@numba.jit(nogil=True)
-def zigzag(n):  # pragma: no cover
-    " 32-bit only "
-    return (n << 1) ^ (n >> 31)
-
-
-@numba.njit(nogil=True)
-def encode_bitpacked_inv(values, width, o):  # pragma: no cover
-    bit = 16 - width
-    right_byte_mask = 0b11111111
-    left_byte_mask = right_byte_mask << 8
-    bits = 0
-    for v in values:
-        bits |= v << bit
-        while bit <= 8:
-            o.write_byte((bits & left_byte_mask) >> 8)
-            bit += 8
-            bits = (bits & right_byte_mask) << 8
-        bit -= width
-    if bit:
-        o.write_byte((bits & left_byte_mask) >> 8)
-
-
-@numba.njit(nogil=True)
-def encode_bitpacked(values, width, o):  # pragma: no cover
-    """
-    Write values packed into width-bits each (which can be >8)
-
-    values is a NumbaIO array (int32)
-    o is a NumbaIO output array (uint8), size=(len(values)*width)/8, rounded up.
-    """
-    bit_packed_count = (len(values) + 7) // 8
-    encode_unsigned_varint(bit_packed_count << 1 | 1, o)  # write run header
-
-    bit = 0
-    right_byte_mask = 0b11111111
-    bits = 0
-    for v in values:
-        bits |= v << bit
-        bit += width
-        while bit >= 8:
-            o.write_byte(bits & right_byte_mask)
-            bit -= 8
-            bits >>= 8
-    if bit:
-        o.write_byte(bits)
-
-
-def write_length(l, o):
-    """ Put a 32-bit length into four bytes in o
-
-    Equivalent to struct.pack('<i', l), but suitable for numba-jit
-    """
-    right_byte_mask = 0b11111111
-    for _ in range(4):
-        o.write_byte(l & right_byte_mask)
-        l >>= 8
-
-
-def encode_rle_bp(data, width, o, withlength=False):
-    """Write data into o using RLE/bitpacked hybrid
-
-    data : values to encode (int32)
-    width : bits-per-value, set by max(data)
-    o : output encoding.Numpy8
-    withlength : bool
-        If definitions/repetitions, length of data must be pre-written
-    """
-    if withlength:
-        start = o.loc
-        o.loc = o.loc + 4
-    if True:
-        # I don't know how one would choose between RLE and bitpack
-        encode_bitpacked(data, width, o)
-    if withlength:
-        end = o.loc
-        o.loc = start
-        write_length(end - start, o)
-        o.loc = end
-
-
 def encode_rle(data, se, fixed_text=None):
     if data.dtype.kind not in ['i', 'u']:
         raise ValueError('RLE/bitpack encoding only works for integers')
     if se.type_length in [8, 16]:
-        o = encoding.Numpy8(np.empty(10, dtype=np.uint8))
+        buf = np.empty(10, dtype=np.uint8)
+        o = NumpyIO(buf)
         bit_packed_count = (len(data) + 7) // 8
-        encode_unsigned_varint(bit_packed_count << 1 | 1, o)  # write run header
+        cencoding.encode_unsigned_varint(bit_packed_count << 1 | 1, o)  # write run header
+        # TODO: `tobytes` makes copy, and adding bytes also makes copy
         return o.so_far().tobytes() + data.values.tostring()
     else:
+        # TODO: probably width is always 1
+        #  if not, consider rounding width up to nearest power of 2
         m = data.max()
         width = 0
         while m:
             m >>= 1
             width += 1
         l = (len(data) * width + 7) // 8 + 10
-        o = encoding.Numpy8(np.empty(l, dtype='uint8'))
-        encode_rle_bp(data, width, o)
+        buf = np.empty(l, dtype='uint8')
+        o = NumpyIO(buf)
+        cencoding.encode_rle_bp(data, width, o)
+        # TODO: `tobytes` makes copy
         return o.so_far().tobytes()
 
 
 def encode_dict(data, se):
-    """ The data part of dictionary encoding is always int8, with RLE/bitpack
+    """ The data part of dictionary encoding is always int8/16, with RLE/bitpack
     """
     width = data.values.dtype.itemsize * 8
-    o = encoding.Numpy8(np.empty(10, dtype=np.uint8))
+    buf = np.empty(10, dtype=np.uint8)
+    o = NumpyIO(buf)
     o.write_byte(width)
     bit_packed_count = (len(data) + 7) // 8
-    encode_unsigned_varint(bit_packed_count << 1 | 1, o)  # write run header
-    return o.so_far().tobytes() + data.values.tobytes()
+    cencoding.encode_unsigned_varint(bit_packed_count << 1 | 1, o)  # write run header
+    # TODO: `bytes`, `tobytes` makes copy, and adding bytes also makes copy
+    return bytes(o.so_far()) + data.values.tobytes()
+
 
 encode = {
     'PLAIN': encode_plain,
@@ -438,23 +368,26 @@ def make_definitions(data, no_nulls):
     """For data that can contain NULLs, produce definition levels binary
     data: either bitpacked bools, or (if number of nulls == 0), single RLE
     block."""
-    temp = encoding.Numpy8(np.empty(10, dtype=np.uint8))
+    buf = np.empty(10, dtype=np.uint8)
+    temp = NumpyIO(buf)
 
     if no_nulls:
         # no nulls at all
         l = len(data)
-        encode_unsigned_varint(l << 1, temp)
+        cencoding.encode_unsigned_varint(l << 1, temp)
         temp.write_byte(1)
-        block = struct.pack('<i', temp.loc) + temp.so_far().tobytes()
+        # TODO: adding bytes causes copy
+        block = struct.pack('<i', temp.tell()) + temp.so_far()
         out = data
     else:
         se = parquet_thrift.SchemaElement(type=parquet_thrift.Type.BOOLEAN)
         out = encode_plain(data.notnull(), se)
 
-        encode_unsigned_varint(len(out) << 1 | 1, temp)
-        head = temp.so_far().tobytes()
+        cencoding.encode_unsigned_varint(len(out) << 1 | 1, temp)
+        head = temp.so_far()
 
-        block = struct.pack('<i', len(head + out)) + head + out
+        # TODO: adding bytes causes copy
+        block = struct.pack('<i', len(head) + len(out)) + head + out
         out = data.dropna()  # better, data[data.notnull()], from above ?
     return block, out
 
@@ -526,6 +459,7 @@ def write_column(f, data, selement, compression=None):
                 num_values=len(data.cat.categories),
                 encoding=parquet_thrift.Encoding.PLAIN)
         bdata = encode['PLAIN'](pd.Series(data.cat.categories), selement)
+        # TODO: copy on bytes addition
         bdata += 8 * b'\x00'
         l0 = len(bdata)
         if compression:
@@ -563,8 +497,11 @@ def write_column(f, data, selement, compression=None):
         # disallow bitpacking for compatability
         data = data.astype('int32')
 
+    # TODO: here we make a copy of encoded data even if deps
+    #  and reps are empty
     bdata = definition_data + repetition_data + encode[encoding](
             data, selement)
+    # here we make another copy
     bdata += 8 * b'\x00'
     try:
         if encoding != 'RLE_DICTIONARY' and num_nulls == 0:
@@ -926,7 +863,7 @@ def write(filename, data, row_group_offsets=50000000,
     if isinstance(row_group_offsets, int):
         if not row_group_offsets:
             row_group_offsets = [0]
-        else: 
+        else:
             l = len(data)
             nparts = max((l - 1) // row_group_offsets + 1, 1)
             chunksize = max(min((l - 1) // nparts + 1, l), 1)
@@ -981,7 +918,7 @@ def write(filename, data, row_group_offsets=50000000,
 part files. This situation is not allowed with use of `append='overwrite'`.")
                 i_offset = 0
             else:
-                i_offset = find_max_part(fmd.row_groups)                
+                i_offset = find_max_part(fmd.row_groups)
         else:
             i_offset = 0
 
@@ -1004,7 +941,7 @@ part files. This situation is not allowed with use of `append='overwrite'`.")
                     # Get 'new' combinations of values from columns listed in
                     # 'partition_on',along with corresponding row groups.
                     new_rgps = {'_'.join(rg.columns[0].file_path.split('/')[:-1]): rg \
-                              for rg in rgs}                    
+                              for rg in rgs}
                     for part_val in new_rgps:
                         if part_val in exist_rgps:
                             # Replace existing row group metadata with new ones.
@@ -1019,7 +956,7 @@ part files. This situation is not allowed with use of `append='overwrite'`.")
                             # Keep 'exist_rgps' list representative for next 'replace'
                             # or 'insert' cases.
                             exist_rgps.insert(row_group_index, part_val)
-                    
+
             else:
                 partname = join_path(filename, part)
                 with open_with(partname, 'wb') as f2:

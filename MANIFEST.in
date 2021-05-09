@@ -1,6 +1,5 @@
 recursive-include fastparquet *.py
 recursive-include fastparquet *.pyx
-#exclude fastparquet/*.c
 
 include setup.py
 include README.rst
@@ -9,5 +8,6 @@ include MANIFEST.in
 include requirements.txt
 
 prune fastparquet/test/
+prune fastparquet/benchmarks/
 prune test-data/
 prune docs/

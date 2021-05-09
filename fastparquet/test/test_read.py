@@ -8,6 +8,7 @@ import pytest
 
 import fastparquet
 from fastparquet import writer, core
+from fastparquet.cencoding import NumpyIO
 
 from fastparquet.test.util import TEST_DATA, s3, tempdir
 
@@ -47,6 +48,7 @@ def test_read_footer():
     assert {s.name for s in p._schema} == snames
     assert set(p.columns) == snames - {"schema"}
 
+
 files = [os.path.join(TEST_DATA, p) for p in
          ["gzip-nation.impala.parquet", "nation.dict.parquet",
           "nation.impala.parquet", "nation.plain.parquet",
@@ -57,7 +59,6 @@ expected = pd.read_csv(csvfile, delimiter="|", index_col=0, names=cols)
 
 
 def test_read_s3(s3):
-    s3fs = pytest.importorskip('s3fs')
     myopen = s3.open
     pf = fastparquet.ParquetFile(TEST_DATA+'/split/_metadata', open_with=myopen)
     df = pf.to_pandas()
@@ -264,13 +265,12 @@ def test_index(tempdir):
 
 
 def test_skip_length():
-    class MockIO:
-        loc = 0
+    data = NumpyIO(bytearray(2**21))
     for num in [1, 63, 64, 64*127, 64*128, 63*128**2, 64*128**2]:
         block, _ = writer.make_definitions(np.zeros(num), True)
-        MockIO.loc = 0
-        core.skip_definition_bytes(MockIO, num)
-        assert len(block) == MockIO.loc
+        data.seek(0, 0)
+        core.skip_definition_bytes(data, num)
+        assert len(block) == data.tell()
 
 
 def test_timestamp96():
@@ -337,6 +337,7 @@ def test_multi_index_category(tempdir):
     assert dg.index.levels[1].name == 'b'
     assert dg.equals(df)
 
+
 def test_no_columns(tempdir):
     # https://github.com/dask/fastparquet/issues/361
     # Create a non-empty DataFrame, then select no columns. That way we get
@@ -351,6 +352,7 @@ def test_no_columns(tempdir):
     expected = pd.DataFrame({"A": [1, 2]})[[]]
     assert len(result) == 2
     pd.testing.assert_frame_equal(result, expected)
+
 
 def test_map_multipage(tempdir):
     pf = fastparquet.ParquetFile(os.path.join(TEST_DATA, "map-test.snappy.parquet"))
@@ -368,6 +370,7 @@ def test_map_multipage(tempdir):
     assert sorted(df["topics"].iloc[0].keys()) == sorted(first_row_keys)
     assert sorted(df["topics"].iloc[-1].keys()) == sorted(last_row_keys)
     assert df.isnull().sum().sum() == 0 # ensure every row got converted
+
 
 def test_map_last_row_split(tempdir):
     pf = fastparquet.ParquetFile(os.path.join(TEST_DATA, "test-map-last-row-split.parquet"))

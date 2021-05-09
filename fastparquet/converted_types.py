@@ -8,13 +8,11 @@ but they're not necessarily the most performant.
 
 import json
 import logging
-import numba
 import numpy as np
-import binascii
-
-import sys
 
 from .thrift_structures import parquet_thrift
+from .cencoding import time_shift
+from .util import json_decoder
 
 logger = logging.getLogger('parquet')  # pylint: disable=invalid-name
 
@@ -93,9 +91,11 @@ def convert(data, se, timestamp96=True):
         return data
     if ctype == parquet_thrift.ConvertedType.UTF8:
         if data.dtype != "O":
-            # stats pairs
-            return np.array([o.decode() for o in data])
-        return np.array(data)  # was already converted in speedups
+            # fixed string
+            import pandas as pd
+            return pd.Series(data).str.decode("utf8").values
+        # already converted in speedups.unpack_byte_array
+        return data
     if ctype == parquet_thrift.ConvertedType.DECIMAL:
         scale_factor = 10**-se.scale
         if data.dtype.kind in ['i', 'f']:
@@ -103,6 +103,7 @@ def convert(data, se, timestamp96=True):
         else:  # byte-string
             # NB: general but slow method
             # could optimize when data.dtype.itemsize <= 8
+            # TODO: easy cythonize (but rare)
             return np.array([
                 int.from_bytes(
                     data.data[i:i + 1], byteorder='big', signed=True
@@ -110,26 +111,27 @@ def convert(data, se, timestamp96=True):
                 for i in range(len(data))
             ])
     elif ctype == parquet_thrift.ConvertedType.DATE:
-        return (data * DAYS_TO_MILLIS).view('datetime64[ns]')
+        data *= DAYS_TO_MILLIS
+        return data.view('datetime64[ns]')
     elif ctype == parquet_thrift.ConvertedType.TIME_MILLIS:
-        out = np.empty(len(data), dtype='int64')
-        if sys.platform == 'win32':
-            data = data.astype('int64')
-        time_shift(data, out, 1000000)
+        out = data.astype('int64', copy=False)
+        time_shift(out.view("int64"), 1000000)
         return out.view('timedelta64[ns]')
     elif ctype == parquet_thrift.ConvertedType.TIMESTAMP_MILLIS:
-        out = np.empty_like(data)
-        time_shift(data, out, 1000000)
+        out = data
+        time_shift(data.view("int64"), 1000000)
         return out.view('datetime64[ns]')
     elif ctype == parquet_thrift.ConvertedType.TIME_MICROS:
-        out = np.empty_like(data)
-        time_shift(data, out)
+        out = data
+        time_shift(data.view("int64"))
         return out.view('timedelta64[ns]')
     elif ctype == parquet_thrift.ConvertedType.TIMESTAMP_MICROS:
-        out = np.empty_like(data)
-        time_shift(data, out)
+        out = data
+        time_shift(data.view("int64"))
         return out.view('datetime64[ns]')
     elif ctype == parquet_thrift.ConvertedType.UINT_8:
+        # TODO: return strided views?
+        #  data.view('uint8')[::data.itemsize].view(out_dtype)
         return data.astype(np.uint8)
     elif ctype == parquet_thrift.ConvertedType.UINT_16:
         return data.astype(np.uint16)
@@ -150,13 +152,17 @@ def convert(data, se, timestamp96=True):
             out = np.empty(len(data), dtype="O")
         else:
             out = data
-        out[:] = [json.loads(d.decode('utf8')) for d in data]
+        # TODO: unnecessary list - loop would save memory, and can cythonise
+        decoder = json_decoder()
+        out[:] = [decoder(d) for d in data]
         return out
     elif ctype == parquet_thrift.ConvertedType.BSON:
         if isinstance(data, list) or data.dtype != "O":
             out = np.empty(len(data), dtype="O")
         else:
             out = data
+        # TODO: unnecessary list - loop would save memory, and can cythonise
+        #  and could use better BSON lib (bson-numpy, python-bsonjs)?
         out[:] = [unbson(d) for d in data]
         return out
     elif ctype == parquet_thrift.ConvertedType.INTERVAL:
@@ -167,12 +173,3 @@ def convert(data, se, timestamp96=True):
         logger.info("Converted type '%s'' not handled",
                     parquet_thrift.ConvertedType._VALUES_TO_NAMES[ctype])  # pylint:disable=protected-access
     return data
-
-
-@numba.njit(nogil=True)
-def time_shift(indata, outdata, factor=1000):  # pragma: no cover
-    for i in range(len(indata)):
-        if indata[i] == nat:
-            outdata[i] = nat
-        else:
-            outdata[i] = indata[i] * factor

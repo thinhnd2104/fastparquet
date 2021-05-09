@@ -1,7 +1,6 @@
 """parquet - read parquet files."""
 from collections import OrderedDict
 import io
-import json
 import re
 import struct
 
@@ -13,7 +12,7 @@ from .thrift_structures import parquet_thrift
 from . import core, schema, converted_types, encoding, dataframe
 from .util import (default_open, ParquetException, val_to_num,
                    ensure_bytes, check_column_names, metadata_from_many,
-                   ex_from_sep, get_file_scheme, groupby_types)
+                   ex_from_sep, json_decoder)
 
 
 class ParquetFile(object):
@@ -177,11 +176,7 @@ class ParquetFile(object):
         return {col['field_name']: col for col in self.pandas_metadata.get('partition_columns', [])}
 
     def _read_partitions(self):
-        paths = [
-            rg.columns[0].file_path or ""
-            for rg in self.row_groups
-            if rg.columns
-        ]
+        paths = [rg.columns[0].file_path or "" for rg in self.row_groups if rg.columns]
         self.file_scheme, self.cats = paths_to_cats(paths, self.partition_meta)
 
     def row_group_filename(self, rg):
@@ -467,7 +462,7 @@ class ParquetFile(object):
     def pandas_metadata(self):
         if self._pdm is None:
             if self.has_pandas_metadata:
-                self._pdm = json.loads(self.key_value_metadata['pandas'])
+                self._pdm = json_decoder()(self.key_value_metadata['pandas'])
             else:
                 self._pdm = {}
         return self._pdm
@@ -482,7 +477,7 @@ class ParquetFile(object):
         # old track
         vals = self.key_value_metadata.get("fastparquet.cats", None)
         if vals:
-            return json.loads(vals)
+            return json_decoder()(vals)
         else:
             return {}
 
@@ -874,7 +869,6 @@ def filter_out_cats(rg, filters, partition_meta={}):
     -------
     True or False
     """
-    # TODO: fix for Drill
     if len(filters) == 0 or rg.columns[0].file_path is None:
         return False
     s = ex_from_sep('/')
