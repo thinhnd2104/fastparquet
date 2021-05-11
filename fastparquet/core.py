@@ -9,8 +9,8 @@ except ImportError:
 from . import encoding
 from . encoding import read_plain
 import fastparquet.cencoding as encoding
-from .compression import decompress_data
-from .converted_types import convert, typemap
+from .compression import decompress_data, rev_map, decom_into
+from .converted_types import convert, typemap, converts_inplace
 from .schema import _is_list_like, _is_map_like
 from .speedups import unpack_byte_array
 from .thrift_structures import parquet_thrift, read_thrift
@@ -34,12 +34,14 @@ def _read_page(file_obj, page_header, column_metadata):
     return raw_bytes
 
 
-def read_data(fobj, coding, count, bit_width):
+def read_data(fobj, coding, count, bit_width, out=None):
     """For definition and repetition levels
 
     Reads with RLE/bitpacked hybrid, where length is given by first byte.
+
+    out: potentially provide a len(count) uint8 array to reuse
     """
-    out = np.empty(count, dtype=np.uint8)
+    out = out or np.empty(count, dtype=np.uint8)
     o = encoding.NumpyIO(out)
     if coding == parquet_thrift.Encoding.RLE:
         while o.tell() < count:
@@ -49,7 +51,7 @@ def read_data(fobj, coding, count, bit_width):
     return out
 
 
-def read_def(io_obj, daph, helper, metadata):
+def read_def(io_obj, daph, helper, metadata, out=None):
     """
     Read the definition levels from this page, if any.
     """
@@ -60,9 +62,10 @@ def read_def(io_obj, daph, helper, metadata):
             metadata.path_in_schema)
         bit_width = encoding.width_from_max_int(max_definition_level)
         if bit_width:
+            # NB: num_values is index 1 for either type of page header
             definition_levels = read_data(
-                    io_obj, daph.definition_level_encoding,
-                    daph.num_values, bit_width)[:daph.num_values]
+                    io_obj, parquet_thrift.Encoding.RLE,
+                    daph.num_values, bit_width, out=out)
             num_nulls = daph.num_values - (definition_levels ==
                                            max_definition_level).sum()
         if num_nulls == 0:
@@ -70,7 +73,7 @@ def read_def(io_obj, daph, helper, metadata):
     return definition_levels, num_nulls
 
 
-def read_rep(io_obj, daph, helper, metadata):
+def read_rep(io_obj, daph, helper, metadata, out=None):
     """
     Read the repetition levels from this page, if any.
     """
@@ -82,11 +85,11 @@ def read_rep(io_obj, daph, helper, metadata):
             repetition_levels = None
         else:
             bit_width = encoding.width_from_max_int(max_repetition_level)
-            repetition_levels = read_data(io_obj, daph.repetition_level_encoding,
+            # NB: num_values is index 1 for either type of page header
+            repetition_levels = read_data(io_obj, parquet_thrift.Encoding.RLE,
                                           daph.num_values,
-                                          bit_width)[:daph.num_values]
-            # if repetition_levels.max() == 0:
-            #     repetition_levels = None
+                                          bit_width,
+                                          out=out)
     return repetition_levels
 
 
@@ -178,8 +181,172 @@ def read_dictionary_page(file_obj, schema_helper, page_header, column_metadata, 
     return values
 
 
+def read_data_page_v2(infile, schema_helper, se, data_header2, cmd,
+                      dic, assign, num, use_cat, file_offset, ph, idx=None):
+    """
+    :param infile: open file
+    :param schema_helper:
+    :param se: schema element
+    :param data_header2: page header struct
+    :param cmd: column metadata
+    :param dic: any dictionary labels encountered
+    :param assign: output array (all of it)
+    :param num: offset, rows so far
+    :param use_cat: output is categorical?
+    :return: None
+
+    test data "/Users/mdurant/Downloads/datapage_v2.snappy.parquet"
+          a  b    c      d          e
+    0   abc  1  2.0   True  [1, 2, 3]
+    1   abc  2  3.0   True       None
+    2   abc  3  4.0   True       None
+    3  None  4  5.0  False  [1, 2, 3]
+    4   abc  5  2.0   True     [1, 2]
+
+    b is delta encoded; c is dict encoded
+
+    """
+    if data_header2.encoding not in [parquet_thrift.Encoding.PLAIN_DICTIONARY,
+                                     parquet_thrift.Encoding.RLE_DICTIONARY,
+                                     parquet_thrift.Encoding.RLE,
+                                     parquet_thrift.Encoding.PLAIN,
+                                     parquet_thrift.Encoding.DELTA_BINARY_PACKED
+                                     ]:
+        raise NotImplementedError
+    size = ph.compressed_page_size
+    max_rep = schema_helper.max_repetition_level(cmd.path_in_schema)
+    data = infile.tell() + data_header2.definition_levels_byte_length + data_header2.repetition_levels_byte_length
+    n_values = data_header2.num_values - data_header2.num_nulls
+    if max_rep:
+        bit_width = encoding.width_from_max_int(max_rep)
+        io_obj = encoding.NumpyIO(infile.read(data_header2.repetition_levels_byte_length))
+        repi = np.empty(data_header2.num_values, dtype="uint8")
+        encoding.read_rle_bit_packed_hybrid(io_obj, bit_width, data_header2.num_values,
+                                            encoding.NumpyIO(repi), itemsize=1)
+        size -= data_header2.repetition_levels_byte_length
+
+    max_def = schema_helper.max_definition_level(cmd.path_in_schema)
+    if max_def and data_header2.num_nulls:
+        bit_width = encoding.width_from_max_int(max_def)
+        io_obj = encoding.NumpyIO(infile.read(data_header2.definition_levels_byte_length))
+        defi = np.empty(data_header2.num_values, dtype="uint8")
+        encoding.read_rle_bit_packed_hybrid(io_obj, bit_width, data_header2.num_values,
+                                            encoding.NumpyIO(defi), itemsize=1)
+        nulls = defi != max_def
+        size -= data_header2.definition_levels_byte_length
+    else:
+        infile.seek(data)
+
+    into0 = ((use_cat or converts_inplace(se)) and data_header2.num_nulls == 0
+             and max_rep == 0)
+    into = (data_header2.is_compressed and rev_map[cmd.codec] in decom_into
+            and into0)
+
+    if into and into0 and data_header2.encoding == parquet_thrift.Encoding.PLAIN:
+        # PLAIN decompress directly into output
+        decomp = decom_into[rev_map[cmd.codec]]
+        decomp(infile.read(ph.compressed_page_size), assign[num:num+data_header2.num_values])
+    if into0 and data_header2.encoding == parquet_thrift.Encoding.PLAIN and (
+        not data_header2.is_compressed or cmd.codec == parquet_thrift.CompressionCodec.UNCOMPRESSED
+    ):
+        # PLAIN read directly into output (a copy for remote files)
+        infile.read_into(size, assign[num:num+n_values])
+    elif data_header2.encoding == parquet_thrift.Encoding.PLAIN:
+        # PLAIN, but with nulls or not in-place conversion
+        codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
+        raw_bytes = decompress_data(infile.read(size),
+                                    ph.uncompressed_page_size, codec)
+        values = read_plain(encoding.read_plain(raw_bytes),
+                            cmd.type,
+                            n_values,
+                            width=se.type_length,
+                            utf=se.converted_type == 0)
+        if data_header2.num_nulls:
+            assign[num:num+data_header2.num_values][nulls] = None  # or nan or nat
+            assign[num:num+data_header2.num_values][~nulls] = convert(values, se)
+        else:
+            assign[num:num+data_header2.num_values] = convert(values, se)
+    elif (into0 and use_cat and data_header2.encoding in [
+        parquet_thrift.Encoding.PLAIN_DICTIONARY,
+        parquet_thrift.Encoding.RLE_DICTIONARY,
+    ]) or (into0 and data_header2.encoding == parquet_thrift.Encoding.RLE):
+        # DICTIONARY or BOOL direct decode RLE into output (no nulls)
+        codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
+        compressed_bytes = infile.read(size)
+        raw_bytes = decompress_data(compressed_bytes, ph.uncompressed_page_size, codec)
+        pagefile = encoding.NumpyIO(raw_bytes)
+        if data_header2.encoding == parquet_thrift.Encoding.RLE:
+            # bool
+            bit_width = 1
+            pagefile.seek(4, 1)  # we don't actually need the length!
+        else:
+            bit_width = pagefile.read_byte()
+        encoding.read_rle_bit_packed_hybrid(
+            pagefile,
+            bit_width,
+            ph.uncompressed_page_size,
+            encoding.NumpyIO(assign[num:num+data_header2.num_values]),
+            itemsize=1
+        )
+    elif data_header2.encoding in [
+        parquet_thrift.Encoding.PLAIN_DICTIONARY,
+        parquet_thrift.Encoding.RLE_DICTIONARY
+    ]:
+        # DICTIONARY to be de-referenced, with or without nulls
+        codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
+        compressed_bytes = infile.read(size)
+        raw_bytes = decompress_data(compressed_bytes, ph.uncompressed_page_size, codec)
+        out = np.empty(n_values, dtype='uint8')
+        pagefile = encoding.NumpyIO(raw_bytes)
+        bit_width = pagefile.read_byte()
+        encoding.read_rle_bit_packed_hybrid(
+            pagefile,
+            bit_width,
+            ph.uncompressed_page_size,
+            encoding.NumpyIO(out),
+            itemsize=1
+        )
+        if max_rep:
+            # num_rows got filled, but consumed num_values data entries; on the next page
+            # we don't know where we're up to
+            # example hardcodes that elements are required but whole rows are not
+            # and that we know there is no dict
+            encoding._assemble_objects(
+                assign[idx[0]:idx[0]+data_header2.num_rows], defi, repi, out, dic, d=True,
+                null=True, null_val=False, max_defi=max_def, prev_i=0
+            )
+            idx[0] += data_header2.num_rows
+        elif data_header2.num_nulls:
+            assign[num:num+data_header2.num_values][nulls] = None  # may be unnecessary
+            assign[num:num+data_header2.num_values][~nulls] = dic[out]
+        else:
+            assign[num:num+data_header2.num_values] = dic[out]
+    elif data_header2.encoding == parquet_thrift.Encoding.DELTA_BINARY_PACKED:
+        codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
+        raw_bytes = decompress_data(infile.read(size),
+                                    ph.uncompressed_page_size, codec)
+        if converts_inplace(se):
+            encoding.delta_binary_unpack(
+                encoding.NumpyIO(raw_bytes),
+                encoding.NumpyIO(assign[num:num+data_header2.num_values].view('uint8'))
+            )
+            convert(assign[num:num+data_header2.num_values], se)
+        else:
+            out = np.empty(data_header2.num_values, dtype='int32')
+            encoding.delta_binary_unpack(
+                encoding.NumpyIO(raw_bytes), encoding.NumpyIO(out.view('uint8'))
+            )
+            assign[num:num+data_header2.num_values] = convert(out, se)
+    else:
+        codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
+        raw_bytes = decompress_data(infile.read(size),
+                                    ph.uncompressed_page_size, codec)
+        raise NotImplementedError
+    return data_header2.num_values
+
+
 def read_col(column, schema_helper, infile, use_cat=False,
-             grab_dict=False, selfmade=False, assign=None, catdef=None):
+             selfmade=False, assign=None, catdef=None):
     """Using the given metadata, read one column in one row-group.
 
     Parameters
@@ -193,9 +360,6 @@ def read_col(column, schema_helper, infile, use_cat=False,
     use_cat: bool (False)
         If this column is encoded throughout with dict encoding, give back
         a pandas categorical column; otherwise, decode to values
-    grab_dict: bool (False)
-        Short-cut mode to return the dictionary values only - skips the actual
-        data.
     """
     cmd = column.meta_data
     se = schema_helper.schema_element(cmd.path_in_schema)
@@ -203,30 +367,10 @@ def read_col(column, schema_helper, infile, use_cat=False,
                cmd.data_page_offset))
 
     infile.seek(off)
-    ph = read_thrift(infile, parquet_thrift.PageHeader)
-
-    dic = None
-    if ph.type == parquet_thrift.PageType.DICTIONARY_PAGE:
-        dic = read_dictionary_page(infile, schema_helper, ph, cmd, utf=se.converted_type == 0)
-        ph = read_thrift(infile, parquet_thrift.PageHeader)
-        dic = convert(dic, se)
-    if grab_dict:
-        return dic
-    if use_cat and dic is not None:
-        # fastpath skips the check the number of categories hasn't changed.
-        # In this case, they may change, if the default RangeIndex was used.
-        catdef._set_categories(pd.Index(dic), fastpath=True)
-        if np.iinfo(assign.dtype).max < len(dic):
-            raise RuntimeError('Assigned array dtype (%s) cannot accommodate '
-                               'number of category labels (%i)' %
-                               (assign.dtype, len(dic)))
-
     rows = cmd.num_values
 
-    do_convert = True
     if use_cat:
         my_nan = -1
-        do_convert = False
     else:
         if assign.dtype.kind in ['f', 'i', 'u']:
             my_nan = np.nan
@@ -237,16 +381,31 @@ def read_col(column, schema_helper, infile, use_cat=False,
             my_nan = None
 
     num = 0
-    row_idx = 0
-    while True:
+    row_idx = [0]
+    dic = None
+
+    while num < rows:
+        off = infile.tell()
+        ph = read_thrift(infile, parquet_thrift.PageHeader)
         if ph.type == parquet_thrift.PageType.DICTIONARY_PAGE:
             dic2 = read_dictionary_page(infile, schema_helper, ph, cmd, utf=se.converted_type == 0)
             dic2 = convert(dic2, se)
-            if use_cat and (dic2 != dic).any():
+            if use_cat and dic is not None and (dic2 != dic).any():
                 raise RuntimeError("Attempt to read as categorical a column"
                                    "with multiple dictionary pages.")
             dic = dic2
-            ph = read_thrift(infile, parquet_thrift.PageHeader)
+            if use_cat and dic is not None:
+                # fastpath skips the check the number of categories hasn't changed.
+                # In this case, they may change, if the default RangeIndex was used.
+                catdef._set_categories(pd.Index(dic), fastpath=True)
+                if np.iinfo(assign.dtype).max < len(dic):
+                    raise RuntimeError('Assigned array dtype (%s) cannot accommodate '
+                                       'number of category labels (%i)' %
+                                       (assign.dtype, len(dic)))
+            continue
+        if ph.type == parquet_thrift.PageType.DATA_PAGE_V2:
+            num += read_data_page_v2(infile, schema_helper, se, ph.data_page_header_v2, cmd,
+                                     dic, assign, num, use_cat, off, ph, row_idx)
             continue
         if (selfmade and hasattr(cmd, 'statistics') and
                 getattr(cmd.statistics, 'null_count', 1) == 0):
@@ -272,8 +431,10 @@ def read_col(column, schema_helper, infile, use_cat=False,
             null = not schema_helper.is_required(cmd.path_in_schema[0])
             null_val = (se.repetition_type !=
                         parquet_thrift.FieldRepetitionType.REQUIRED)
-            row_idx = 1 + encoding._assemble_objects(assign, defi, rep, val, dic, d,
-                                                     null, null_val, max_defi, row_idx)
+            row_idx[0] = 1 + encoding._assemble_objects(
+                assign, defi, rep, val, dic, d,
+                null, null_val, max_defi, row_idx[0]
+            )
         elif defi is not None:
             # TODO: if output is NULLABLE (e.g., IntegerArray) can use
             #  fastpath here, but need nulls array
@@ -281,7 +442,7 @@ def read_col(column, schema_helper, infile, use_cat=False,
             part[defi != max_defi] = my_nan
             if d and not use_cat:
                 part[defi == max_defi] = dic[val]
-            elif do_convert:
+            elif not use_cat:
                 part[defi == max_defi] = convert(val, se)
             else:
                 part[defi == max_defi] = val
@@ -300,15 +461,12 @@ def read_col(column, schema_helper, infile, use_cat=False,
                 piece[:] = i.codes
             elif d and not use_cat:
                 piece[:] = dic[val]
-            elif do_convert:
+            elif not use_cat:
                 piece[:] = convert(val, se)
             else:
                 piece[:] = val
 
         num += len(defi) if defi is not None else len(val)
-        if num >= rows:
-            break
-        ph = read_thrift(infile, parquet_thrift.PageHeader)
 
 
 def read_row_group_file(fn, rg, columns, categories, schema_helper, cats,
@@ -356,6 +514,7 @@ def read_row_group_arrays(file, rg, columns, categories, schema_helper, cats,
                     value, key = out[name], maps[name]
                 out[name][:] = [dict(zip(k, v)) if k is not None else None
                                 for k, v in zip(key, value)]
+                del maps[name]
 
 
 def read_row_group(file, rg, columns, categories, schema_helper, cats,
