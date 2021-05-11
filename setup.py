@@ -46,14 +46,14 @@ install_requires = open('requirements.txt').read().strip().split('\n')
 
 setup(
     name='fastparquet',
-    version='0.6.0post1',
+    version='0.6.1',
     description='Python support for Parquet file format',
     author='Martin Durant',
     author_email='mdurant@canaconda.com',
     url='https://github.com/dask/fastparquet/',
     license='Apache License 2.0',
     classifiers=[
-        'Development Status :: 3 - Alpha',
+        'Development Status :: 4 - Beta',
         'Intended Audience :: Developers',
         'Intended Audience :: System Administrators',
         'License :: OSI Approved :: Apache Software License',
