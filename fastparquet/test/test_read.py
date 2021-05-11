@@ -240,17 +240,6 @@ def test_statistics(tempdir):
     assert stat['min']['c'] == [b'a']
 
 
-def test_grab_cats(tempdir):
-    s = pd.Series(['a', 'c', 'b']*20)
-    df = pd.DataFrame({'a': s, 'b': s.astype('category'),
-                       'c': s.astype('category').cat.as_ordered()})
-    fastparquet.write(tempdir, df, file_scheme='hive')
-    pf = fastparquet.ParquetFile(tempdir)
-    cats = pf.grab_cats(['b', 'c'])
-    assert (cats['b'] == df.b.cat.categories).all()
-    assert (cats['c'] == df.c.cat.categories).all()
-
-
 def test_index(tempdir):
     s = pd.Series(['a', 'c', 'b']*20)
     df = pd.DataFrame({'a': s, 'b': s.astype('category'),
@@ -271,6 +260,20 @@ def test_skip_length():
         data.seek(0, 0)
         core.skip_definition_bytes(data, num)
         assert len(block) == data.tell()
+
+
+def test_v2():
+    # from https://github.com/apache/parquet-testing/tree/master/data
+    pf = fastparquet.ParquetFile(os.path.join(TEST_DATA, 'datapage_v2.snappy.parquet'))
+    expected = {
+        'a': {0: 'abc', 1: 'abc', 2: 'abc', 3: None, 4: 'abc'},
+        'b': {0: 1, 1: 2, 2: 3, 3: 4, 4: 5},
+        'c': {0: 2.0, 1: 3.0, 2: 4.0, 3: 5.0, 4: 2.0},
+        'd': {0: True, 1: True, 2: True, 3: False, 4: True},
+        'e': {0: [1, 2, 3], 1: None, 2: None, 3: [1, 2, 3], 4: [1, 2]}
+    }
+    out = pf.to_pandas()
+    assert out.to_dict() == expected
 
 
 def test_timestamp96():

@@ -20,7 +20,7 @@ try:
     from bson import BSON
     unbson = BSON.decode
     tobson = BSON.encode
-except ImportError:
+except ImportError:  # pragma: no cover
     try:
         import bson
         unbson = bson.loads
@@ -73,6 +73,26 @@ def typemap(se):
     return np.dtype("O")
 
 
+def converts_inplace(se):
+    """when converting, reuses input array"""
+    ctype = se.converted_type
+    if ctype is None:
+        return True
+    if se.type == parquet_thrift.Type.BYTE_ARRAY:
+        return ctype == parquet_thrift.ConvertedType.UTF8
+    if ctype in [
+        parquet_thrift.ConvertedType.DATE,
+        parquet_thrift.ConvertedType.TIME_MILLIS,
+        parquet_thrift.ConvertedType.TIMESTAMP_MILLIS,
+        parquet_thrift.ConvertedType.TIME_MICROS,
+        parquet_thrift.ConvertedType.TIMESTAMP_MICROS
+    ]:
+        return True
+    if se.type == parquet_thrift.Type.FIXED_LEN_BYTE_ARRAY:
+        return ctype != parquet_thrift.ConvertedType.UTF8
+    return False
+
+
 def convert(data, se, timestamp96=True):
     """Convert known types from primitive to rich.
 
@@ -90,7 +110,7 @@ def convert(data, se, timestamp96=True):
     if ctype is None:
         return data
     if ctype == parquet_thrift.ConvertedType.UTF8:
-        if data.dtype != "O":
+        if data.dtype != "O" or (len(data) == 1 and not isinstance(data[0], str)):
             # fixed string
             import pandas as pd
             return pd.Series(data).str.decode("utf8").values
