@@ -170,6 +170,55 @@ def test_pickle(tempdir):
     assert pf.to_pandas().equals(pf2.to_pandas())
 
 
+def test_directory_local(tempdir):
+    df = pd.DataFrame({'x': [1, 2, 3, 4],
+                       'y': [1.0, 2.0, 1.0, 2.0],
+                       'z': ['a', 'b', 'c', 'd']})
+    df.index.name = 'index'
+    write(os.path.join(tempdir, 'foo1.parquet'), df)
+    write(os.path.join(tempdir, 'foo2.parquet'), df)
+    pf = ParquetFile(tempdir)
+    assert pf.info['rows'] == 8
+    assert pf.to_pandas()['z'].tolist() == ['a', 'b', 'c', 'd'] * 2
+
+
+def test_directory_mem():
+    import fsspec
+    m = fsspec.filesystem("memory")
+    df = pd.DataFrame({'x': [1, 2, 3, 4],
+                       'y': [1.0, 2.0, 1.0, 2.0],
+                       'z': ['a', 'b', 'c', 'd']})
+    df.index.name = 'index'
+    write('/dir/foo1.parquet', df, open_with=m.open)
+    write('/dir/foo2.parquet', df, open_with=m.open)
+
+    # inferred FS
+    pf = ParquetFile("/dir", open_with=m.open)
+    assert pf.info['rows'] == 8
+    assert pf.to_pandas()['z'].tolist() == ['a', 'b', 'c', 'd'] * 2
+
+    # explicit FS
+    pf = ParquetFile("/dir", fs=m)
+    assert pf.info['rows'] == 8
+    assert pf.to_pandas()['z'].tolist() == ['a', 'b', 'c', 'd'] * 2
+
+
+def test_directory_mem_nest():
+    import fsspec
+    m = fsspec.filesystem("memory")
+    df = pd.DataFrame({'x': [1, 2, 3, 4],
+                       'y': [1.0, 2.0, 1.0, 2.0],
+                       'z': ['a', 'b', 'c', 'd']})
+    df.index.name = 'index'
+    write('/dir/field=a/foo1.parquet', df, open_with=m.open)
+    write('/dir/field=b/foo2.parquet', df, open_with=m.open)
+
+    pf = ParquetFile("/dir", fs=m)
+    assert pf.info['rows'] == 8
+    assert pf.to_pandas()['z'].tolist() == ['a', 'b', 'c', 'd'] * 2
+    assert pf.to_pandas()['field'].tolist() == ['a'] * 4 + ['b'] * 4
+
+
 def test_attributes(tempdir):
     df = pd.DataFrame({'x': [1, 2, 3, 4],
                        'y': [1.0, 2.0, 1.0, 2.0],
@@ -625,49 +674,7 @@ def test_bad_file_paths(tempdir):
     assert out.a.tolist() == ['x', 'y', 'z'] * 2
 
 
-def test_compression_zstandard(tempdir):
-    pytest.importorskip('zstandard')
-
-    df = pd.DataFrame(
-        {
-            'x': np.arange(1000),
-            'y': np.arange(1, 1001),
-            'z': np.arange(2, 1002),
-        }
-    )
-
-    fn = os.path.join(tempdir, 'foocomp.parquet')
-
-    c = {
-        "x": {
-            "type": "gzip",
-            "args": {
-                "compresslevel": 5,
-            }
-        },
-        "y": {
-            "type": "zstd",
-            "args": {
-                "level": 5,
-            }
-        },
-        "_default": {
-            "type": "gzip",
-            "args": None
-        }
-    }
-    write(fn, df, compression=c)
-
-    p = ParquetFile(fn)
-
-    df2 = p.to_pandas()
-
-    pd.testing.assert_frame_equal(df, df2)
-
-
 def test_compression_zstd(tempdir):
-    pytest.importorskip('zstd')
-
     df = pd.DataFrame(
         {
             'x': np.arange(1000),
@@ -706,8 +713,6 @@ def test_compression_zstd(tempdir):
 
 
 def test_compression_lz4(tempdir):
-    pytest.importorskip('lz4')
-
     df = pd.DataFrame(
         {
             'x': np.arange(1000),
@@ -745,9 +750,8 @@ def test_compression_lz4(tempdir):
 
     pd.testing.assert_frame_equal(df, df2)
 
-def test_compression_snappy(tempdir):
-    pytest.importorskip('snappy')
 
+def test_compression_snappy(tempdir):
     df = pd.DataFrame(
         {
             'x': np.arange(1000),
@@ -936,8 +940,8 @@ def test_pandas_metadata_inference():
 
 def test_write_index_false(tempdir):
     fn = os.path.join(tempdir, 'test.parquet')
-    df = pd.DataFrame(0, columns=['a'], index=range(1,3))
+    df = pd.DataFrame(0, columns=['a'], index=range(1, 3))
     write(fn, df, write_index=False)
     rec_df = ParquetFile(fn).to_pandas()
     assert rec_df.index[0] == 0
-    
+
