@@ -5,6 +5,7 @@ import re
 import struct
 
 import numpy as np
+import fsspec
 from fastparquet.util import join_path
 
 from .core import read_thrift
@@ -43,7 +44,9 @@ class ParquetFile(object):
     root: str
         If passing a list of files, the top directory of the data-set may
         be ambiguous for partitioning where the upmost field has only one
-        value. Use this to specify the data'set root directory, if required.
+        value. Use this to specify the dataset root directory, if required.
+    fs: fsspec-compatible filesystem
+        You can use this instead of open_with (otherwise, it will be inferred)
 
     Attributes
     ----------
@@ -80,7 +83,7 @@ class ParquetFile(object):
     _pdm = None
 
     def __init__(self, fn, verify=False, open_with=default_open,
-                 root=False, sep=None):
+                 root=False, sep=None, fs=None):
         if isinstance(fn, (tuple, list)):
             basepath, fmd = metadata_from_many(fn, verify_schema=verify,
                                                open_with=open_with, root=root)
@@ -99,16 +102,42 @@ class ParquetFile(object):
                                  'with multi-file data')
             open_with = lambda *args, **kwargs: fn
         else:
-            try:
-                fn2 = join_path(fn, '_metadata')
-                self.fn = fn2
-                with open_with(fn2, 'rb') as f:
-                    self._parse_header(f, verify)
-                fn = fn2
-            except (IOError, OSError):
+            if open_with is default_open and fs is None:
+                fs = fsspec.filesystem("file")
+            elif fs is not None:
+                open_with = fs.open
+            else:
+                fs = getattr(open_with, "__self__", None)
+                if not isinstance(fs, fsspec.AbstractFileSystem):
+                    raise ValueError("Opening directories without a _metadata requires"
+                                     "a filesystem compatible with fsspec")
+            if fs.isfile(fn):
                 self.fn = join_path(fn)
                 with open_with(fn, 'rb') as f:
                     self._parse_header(f, verify)
+            elif "*" in fn or fs.isdir(fn):
+                fn2 = join_path(fn, '_metadata')
+                if fs.exists(fn2):
+                    self.fn = fn2
+                    with open_with(fn2, 'rb') as f:
+                        self._parse_header(f, verify)
+                    fn = fn2
+                else:
+                    if "*" in fn:
+                        allfiles = fs.glob(fn)
+                    else:
+                        allfiles = [f for f in fs.find(fn) if
+                                    f.endswith(".parquet") or f.endswith(".parq")]
+                    basepath, fmd = metadata_from_many(allfiles, verify_schema=verify,
+                                                       open_with=open_with, root=root)
+                    if basepath:
+                        self.fn = join_path(basepath, '_metadata')  # effective file
+                    else:
+                        self.fn = '_metadata'
+                    self.fmd = fmd
+                    self._set_attrs()
+            else:
+                raise FileNotFoundError
         self.open = open_with
         self.sep = sep
         self._statistics = None
