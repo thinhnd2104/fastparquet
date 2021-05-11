@@ -44,7 +44,9 @@ class ParquetFile(object):
     root: str
         If passing a list of files, the top directory of the data-set may
         be ambiguous for partitioning where the upmost field has only one
-        value. Use this to specify the data'set root directory, if required.
+        value. Use this to specify the dataset root directory, if required.
+    fs: fsspec-compatible filesystem
+        You can use this instead of open_with (otherwise, it will be inferred)
 
     Attributes
     ----------
@@ -107,12 +109,15 @@ class ParquetFile(object):
             elif fs is not None:
                 open_with = fs.open
             else:
-                fs = open_with.__self__
+                fs = getattr(open_with, "__self__", None)
+                if not isinstance(fs, fsspec.AbstractFileSystem):
+                    raise ValueError("Opening directories without a _metadata requires"
+                                     "a filesystem compatible with fsspec")
             if fs.isfile(fn):
                 self.fn = join_path(fn)
                 with open_with(fn, 'rb') as f:
                     self._parse_header(f, verify)
-            elif fs.isdir(fn):
+            elif "*" in fn or fs.isdir(fn):
                 fn2 = join_path(fn, '_metadata')
                 if fs.exists(fn2):
                     self.fn = fn2
@@ -120,8 +125,11 @@ class ParquetFile(object):
                         self._parse_header(f, verify)
                     fn = fn2
                 else:
-                    allfiles = [f for f in fs.find(fn) if
-                                f.endswith(".parquet") or f.endswith(".parq")]
+                    if "*" in fn:
+                        allfiles = fs.glob(fn)
+                    else:
+                        allfiles = [f for f in fs.find(fn) if
+                                    f.endswith(".parquet") or f.endswith(".parq")]
                     basepath, fmd = metadata_from_many(allfiles, verify_schema=verify,
                                                        open_with=open_with, root=root)
                     if basepath:
