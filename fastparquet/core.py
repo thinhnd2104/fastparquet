@@ -71,6 +71,12 @@ def read_def(io_obj, daph, helper, metadata, out=None):
                 and getattr(daph.statistics, "null_count", None) is not None
         ):
             num_nulls = daph.statistics.null_count
+        elif (
+                daph.num_values == metadata.num_values
+                and metadata.statistics
+                and getattr(metadata.statistics, "null_count", None) is not None
+        ):
+            num_nulls = metadata.statistics.null_count
         else:
             num_nulls = daph.num_values - (definition_levels ==
                                                max_definition_level).sum()
@@ -445,7 +451,8 @@ def read_col(column, schema_helper, infile, use_cat=False,
             # TODO: if output is NULLABLE (e.g., IntegerArray) can use
             #  fastpath here, but need nulls array
             part = assign[num:num+len(defi)]
-            part[defi != max_defi] = my_nan
+            if part.dtype.kind != "O":
+                part[defi != max_defi] = my_nan
             if d and not use_cat:
                 part[defi == max_defi] = dic[val]
             elif not use_cat:
