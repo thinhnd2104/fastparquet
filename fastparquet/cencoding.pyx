@@ -286,6 +286,7 @@ cpdef void encode_rle_bp(int32_t[:] data, int32_t width, NumpyIO o, int32_t with
 
 
 @cython.freelist(100)
+@cython.final
 cdef class NumpyIO(object):
     """
     Read or write from a numpy array like a file object
@@ -493,7 +494,7 @@ cpdef dict read_thrift(NumpyIO data):
 
 
 cdef list read_list(NumpyIO data):
-    cdef char byte, typ
+    cdef unsigned char byte, typ
     cdef int32_t size, bsize, _
     byte = data.read_byte()
     if byte >= 0xf0:  # 0b11110000
