@@ -135,6 +135,8 @@ def read_data_page(f, helper, header, metadata, skip_nulls=False,
                             int(daph.num_values - num_nulls),
                             width=width,
                             utf=se.converted_type == 0)
+        import pdb
+        pdb.set_trace()
     elif daph.encoding in [parquet_thrift.Encoding.PLAIN_DICTIONARY,
                            parquet_thrift.Encoding.RLE_DICTIONARY,
                            parquet_thrift.Encoding.RLE]:

@@ -1596,6 +1596,44 @@ static int __Pyx_ParseOptionalKeywords(PyObject *kwds, PyObject **argnames[],\
     PyObject *kwds2, PyObject *values[], Py_ssize_t num_pos_args,\
     const char* function_name);
 
+/* PyCFunctionFastCall.proto */
+#if CYTHON_FAST_PYCCALL
+static CYTHON_INLINE PyObject *__Pyx_PyCFunction_FastCall(PyObject *func, PyObject **args, Py_ssize_t nargs);
+#else
+#define __Pyx_PyCFunction_FastCall(func, args, nargs)  (assert(0), NULL)
+#endif
+
+/* PyFunctionFastCall.proto */
+#if CYTHON_FAST_PYCALL
+#define __Pyx_PyFunction_FastCall(func, args, nargs)\
+    __Pyx_PyFunction_FastCallDict((func), (args), (nargs), NULL)
+#if 1 || PY_VERSION_HEX < 0x030600B1
+static PyObject *__Pyx_PyFunction_FastCallDict(PyObject *func, PyObject **args, Py_ssize_t nargs, PyObject *kwargs);
+#else
+#define __Pyx_PyFunction_FastCallDict(func, args, nargs, kwargs) _PyFunction_FastCallDict(func, args, nargs, kwargs)
+#endif
+#define __Pyx_BUILD_ASSERT_EXPR(cond)\
+    (sizeof(char [1 - 2*!(cond)]) - 1)
+#ifndef Py_MEMBER_SIZE
+#define Py_MEMBER_SIZE(type, member) sizeof(((type *)0)->member)
+#endif
+  static size_t __pyx_pyframe_localsplus_offset = 0;
+  #include "frameobject.h"
+  #define __Pxy_PyFrame_Initialize_Offsets()\
+    ((void)__Pyx_BUILD_ASSERT_EXPR(sizeof(PyFrameObject) == offsetof(PyFrameObject, f_localsplus) + Py_MEMBER_SIZE(PyFrameObject, f_localsplus)),\
+     (void)(__pyx_pyframe_localsplus_offset = ((size_t)PyFrame_Type.tp_basicsize) - Py_MEMBER_SIZE(PyFrameObject, f_localsplus)))
+  #define __Pyx_PyFrame_GetLocalsplus(frame)\
+    (assert(__pyx_pyframe_localsplus_offset), (PyObject **)(((char *)(frame)) + __pyx_pyframe_localsplus_offset))
+#endif
+
+/* PyObjectCallMethO.proto */
+#if CYTHON_COMPILING_IN_CPYTHON
+static CYTHON_INLINE PyObject* __Pyx_PyObject_CallMethO(PyObject *func, PyObject *arg);
+#endif
+
+/* PyObjectCallOneArg.proto */
+static CYTHON_INLINE PyObject* __Pyx_PyObject_CallOneArg(PyObject *func, PyObject *arg);
+
 /* MemviewSliceInit.proto */
 #define __Pyx_BUF_MAX_NDIMS %(BUF_MAX_NDIMS)d
 #define __Pyx_MEMVIEW_DIRECT   1
@@ -1654,46 +1692,8 @@ static int __Pyx__GetException(PyThreadState *tstate, PyObject **type, PyObject 
 static int __Pyx_GetException(PyObject **type, PyObject **value, PyObject **tb);
 #endif
 
-/* PyCFunctionFastCall.proto */
-#if CYTHON_FAST_PYCCALL
-static CYTHON_INLINE PyObject *__Pyx_PyCFunction_FastCall(PyObject *func, PyObject **args, Py_ssize_t nargs);
-#else
-#define __Pyx_PyCFunction_FastCall(func, args, nargs)  (assert(0), NULL)
-#endif
-
-/* PyFunctionFastCall.proto */
-#if CYTHON_FAST_PYCALL
-#define __Pyx_PyFunction_FastCall(func, args, nargs)\
-    __Pyx_PyFunction_FastCallDict((func), (args), (nargs), NULL)
-#if 1 || PY_VERSION_HEX < 0x030600B1
-static PyObject *__Pyx_PyFunction_FastCallDict(PyObject *func, PyObject **args, Py_ssize_t nargs, PyObject *kwargs);
-#else
-#define __Pyx_PyFunction_FastCallDict(func, args, nargs, kwargs) _PyFunction_FastCallDict(func, args, nargs, kwargs)
-#endif
-#define __Pyx_BUILD_ASSERT_EXPR(cond)\
-    (sizeof(char [1 - 2*!(cond)]) - 1)
-#ifndef Py_MEMBER_SIZE
-#define Py_MEMBER_SIZE(type, member) sizeof(((type *)0)->member)
-#endif
-  static size_t __pyx_pyframe_localsplus_offset = 0;
-  #include "frameobject.h"
-  #define __Pxy_PyFrame_Initialize_Offsets()\
-    ((void)__Pyx_BUILD_ASSERT_EXPR(sizeof(PyFrameObject) == offsetof(PyFrameObject, f_localsplus) + Py_MEMBER_SIZE(PyFrameObject, f_localsplus)),\
-     (void)(__pyx_pyframe_localsplus_offset = ((size_t)PyFrame_Type.tp_basicsize) - Py_MEMBER_SIZE(PyFrameObject, f_localsplus)))
-  #define __Pyx_PyFrame_GetLocalsplus(frame)\
-    (assert(__pyx_pyframe_localsplus_offset), (PyObject **)(((char *)(frame)) + __pyx_pyframe_localsplus_offset))
-#endif
-
 /* PyObjectCall2Args.proto */
 static CYTHON_UNUSED PyObject* __Pyx_PyObject_Call2Args(PyObject* function, PyObject* arg1, PyObject* arg2);
-
-/* PyObjectCallMethO.proto */
-#if CYTHON_COMPILING_IN_CPYTHON
-static CYTHON_INLINE PyObject* __Pyx_PyObject_CallMethO(PyObject *func, PyObject *arg);
-#endif
-
-/* PyObjectCallOneArg.proto */
-static CYTHON_INLINE PyObject* __Pyx_PyObject_CallOneArg(PyObject *func, PyObject *arg);
 
 /* IncludeStringH.proto */
 #include <string.h>
@@ -2259,6 +2259,7 @@ int __pyx_module_is_main_fastparquet__speedups = 0;
 static PyObject *__pyx_builtin_object;
 static PyObject *__pyx_builtin_range;
 static PyObject *__pyx_builtin_TypeError;
+static PyObject *__pyx_builtin_print;
 static PyObject *__pyx_builtin_ImportError;
 static PyObject *__pyx_builtin_ValueError;
 static PyObject *__pyx_builtin_MemoryError;
@@ -2302,6 +2303,7 @@ static const char __pyx_k_error[] = "error";
 static const char __pyx_k_flags[] = "flags";
 static const char __pyx_k_items[] = "items";
 static const char __pyx_k_numpy[] = "numpy";
+static const char __pyx_k_print[] = "print";
 static const char __pyx_k_range[] = "range";
 static const char __pyx_k_shape[] = "shape";
 static const char __pyx_k_start[] = "start";
@@ -2325,6 +2327,7 @@ static const char __pyx_k_itemsize[] = "itemsize";
 static const char __pyx_k_pyx_type[] = "__pyx_type";
 static const char __pyx_k_setstate[] = "__setstate__";
 static const char __pyx_k_TypeError[] = "TypeError";
+static const char __pyx_k_bytecount[] = "bytecount";
 static const char __pyx_k_enumerate[] = "enumerate";
 static const char __pyx_k_obj_dtype[] = "_obj_dtype";
 static const char __pyx_k_pyx_state[] = "__pyx_state";
@@ -2411,6 +2414,7 @@ static PyObject *__pyx_n_s_arr;
 static PyObject *__pyx_n_s_array;
 static PyObject *__pyx_n_s_array_encode_utf8;
 static PyObject *__pyx_n_s_base;
+static PyObject *__pyx_n_s_bytecount;
 static PyObject *__pyx_n_s_c;
 static PyObject *__pyx_n_u_c;
 static PyObject *__pyx_n_s_class;
@@ -2464,6 +2468,7 @@ static PyObject *__pyx_n_s_out;
 static PyObject *__pyx_n_s_pack;
 static PyObject *__pyx_n_s_pack_byte_array;
 static PyObject *__pyx_n_s_pickle;
+static PyObject *__pyx_n_s_print;
 static PyObject *__pyx_n_s_ptr;
 static PyObject *__pyx_n_s_pyx_PickleError;
 static PyObject *__pyx_n_s_pyx_checksum;
@@ -3059,58 +3064,31 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_2pack_byte_array(CYTHON_UNUSED
  *         val = items[i]
  *         # `itemlen` should be >= 0, so no signed extension issues
  *         itemlen = PyBytes_GET_SIZE(val)             # <<<<<<<<<<<<<<
- *         # TODO: (<int*> data)[0] = itemlen
- *         data[0] = itemlen & 0xff
+ *         (<int*> data)[0] = itemlen
+ *         data += 4
  */
     __pyx_v_itemlen = PyBytes_GET_SIZE(__pyx_v_val);
 
-    /* "fastparquet/speedups.pyx":83
+    /* "fastparquet/speedups.pyx":82
+ *         # `itemlen` should be >= 0, so no signed extension issues
  *         itemlen = PyBytes_GET_SIZE(val)
- *         # TODO: (<int*> data)[0] = itemlen
- *         data[0] = itemlen & 0xff             # <<<<<<<<<<<<<<
- *         data[1] = (itemlen >> 8) & 0xff
- *         data[2] = (itemlen >> 16) & 0xff
- */
-    (__pyx_v_data[0]) = (__pyx_v_itemlen & 0xff);
-
-    /* "fastparquet/speedups.pyx":84
- *         # TODO: (<int*> data)[0] = itemlen
- *         data[0] = itemlen & 0xff
- *         data[1] = (itemlen >> 8) & 0xff             # <<<<<<<<<<<<<<
- *         data[2] = (itemlen >> 16) & 0xff
- *         data[3] = (itemlen >> 24) & 0xff
- */
-    (__pyx_v_data[1]) = ((__pyx_v_itemlen >> 8) & 0xff);
-
-    /* "fastparquet/speedups.pyx":85
- *         data[0] = itemlen & 0xff
- *         data[1] = (itemlen >> 8) & 0xff
- *         data[2] = (itemlen >> 16) & 0xff             # <<<<<<<<<<<<<<
- *         data[3] = (itemlen >> 24) & 0xff
- *         data += 4
- */
-    (__pyx_v_data[2]) = ((__pyx_v_itemlen >> 16) & 0xff);
-
-    /* "fastparquet/speedups.pyx":86
- *         data[1] = (itemlen >> 8) & 0xff
- *         data[2] = (itemlen >> 16) & 0xff
- *         data[3] = (itemlen >> 24) & 0xff             # <<<<<<<<<<<<<<
+ *         (<int*> data)[0] = itemlen             # <<<<<<<<<<<<<<
  *         data += 4
  *         memcpy(data, PyBytes_AS_STRING(val), itemlen)
  */
-    (__pyx_v_data[3]) = ((__pyx_v_itemlen >> 24) & 0xff);
+    (((int *)__pyx_v_data)[0]) = __pyx_v_itemlen;
 
-    /* "fastparquet/speedups.pyx":87
- *         data[2] = (itemlen >> 16) & 0xff
- *         data[3] = (itemlen >> 24) & 0xff
+    /* "fastparquet/speedups.pyx":83
+ *         itemlen = PyBytes_GET_SIZE(val)
+ *         (<int*> data)[0] = itemlen
  *         data += 4             # <<<<<<<<<<<<<<
  *         memcpy(data, PyBytes_AS_STRING(val), itemlen)
  *         data += itemlen
  */
     __pyx_v_data = (__pyx_v_data + 4);
 
-    /* "fastparquet/speedups.pyx":88
- *         data[3] = (itemlen >> 24) & 0xff
+    /* "fastparquet/speedups.pyx":84
+ *         (<int*> data)[0] = itemlen
  *         data += 4
  *         memcpy(data, PyBytes_AS_STRING(val), itemlen)             # <<<<<<<<<<<<<<
  *         data += itemlen
@@ -3118,7 +3096,7 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_2pack_byte_array(CYTHON_UNUSED
  */
     (void)(memcpy(__pyx_v_data, PyBytes_AS_STRING(__pyx_v_val), __pyx_v_itemlen));
 
-    /* "fastparquet/speedups.pyx":89
+    /* "fastparquet/speedups.pyx":85
  *         data += 4
  *         memcpy(data, PyBytes_AS_STRING(val), itemlen)
  *         data += itemlen             # <<<<<<<<<<<<<<
@@ -3128,7 +3106,7 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_2pack_byte_array(CYTHON_UNUSED
     __pyx_v_data = (__pyx_v_data + __pyx_v_itemlen);
   }
 
-  /* "fastparquet/speedups.pyx":91
+  /* "fastparquet/speedups.pyx":87
  *         data += itemlen
  * 
  *     assert (data - start) == total_size             # <<<<<<<<<<<<<<
@@ -3139,12 +3117,12 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_2pack_byte_array(CYTHON_UNUSED
   if (unlikely(!Py_OptimizeFlag)) {
     if (unlikely(!(((__pyx_v_data - __pyx_v_start) == __pyx_v_total_size) != 0))) {
       PyErr_SetNone(PyExc_AssertionError);
-      __PYX_ERR(0, 91, __pyx_L1_error)
+      __PYX_ERR(0, 87, __pyx_L1_error)
     }
   }
   #endif
 
-  /* "fastparquet/speedups.pyx":92
+  /* "fastparquet/speedups.pyx":88
  * 
  *     assert (data - start) == total_size
  *     return out             # <<<<<<<<<<<<<<
@@ -3177,7 +3155,7 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_2pack_byte_array(CYTHON_UNUSED
   return __pyx_r;
 }
 
-/* "fastparquet/speedups.pyx":95
+/* "fastparquet/speedups.pyx":91
  * 
  * 
  * def unpack_byte_array(const unsigned char[::1] raw_bytes, Py_ssize_t n, const char utf=False):             # <<<<<<<<<<<<<<
@@ -3224,7 +3202,7 @@ static PyObject *__pyx_pw_11fastparquet_8speedups_5unpack_byte_array(PyObject *_
         case  1:
         if (likely((values[1] = __Pyx_PyDict_GetItemStr(__pyx_kwds, __pyx_n_s_n)) != 0)) kw_args--;
         else {
-          __Pyx_RaiseArgtupleInvalid("unpack_byte_array", 0, 2, 3, 1); __PYX_ERR(0, 95, __pyx_L3_error)
+          __Pyx_RaiseArgtupleInvalid("unpack_byte_array", 0, 2, 3, 1); __PYX_ERR(0, 91, __pyx_L3_error)
         }
         CYTHON_FALLTHROUGH;
         case  2:
@@ -3234,7 +3212,7 @@ static PyObject *__pyx_pw_11fastparquet_8speedups_5unpack_byte_array(PyObject *_
         }
       }
       if (unlikely(kw_args > 0)) {
-        if (unlikely(__Pyx_ParseOptionalKeywords(__pyx_kwds, __pyx_pyargnames, 0, values, pos_args, "unpack_byte_array") < 0)) __PYX_ERR(0, 95, __pyx_L3_error)
+        if (unlikely(__Pyx_ParseOptionalKeywords(__pyx_kwds, __pyx_pyargnames, 0, values, pos_args, "unpack_byte_array") < 0)) __PYX_ERR(0, 91, __pyx_L3_error)
       }
     } else {
       switch (PyTuple_GET_SIZE(__pyx_args)) {
@@ -3246,17 +3224,17 @@ static PyObject *__pyx_pw_11fastparquet_8speedups_5unpack_byte_array(PyObject *_
         default: goto __pyx_L5_argtuple_error;
       }
     }
-    __pyx_v_raw_bytes = __Pyx_PyObject_to_MemoryviewSlice_dc_unsigned_char__const__(values[0], 0); if (unlikely(!__pyx_v_raw_bytes.memview)) __PYX_ERR(0, 95, __pyx_L3_error)
-    __pyx_v_n = __Pyx_PyIndex_AsSsize_t(values[1]); if (unlikely((__pyx_v_n == (Py_ssize_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 95, __pyx_L3_error)
+    __pyx_v_raw_bytes = __Pyx_PyObject_to_MemoryviewSlice_dc_unsigned_char__const__(values[0], 0); if (unlikely(!__pyx_v_raw_bytes.memview)) __PYX_ERR(0, 91, __pyx_L3_error)
+    __pyx_v_n = __Pyx_PyIndex_AsSsize_t(values[1]); if (unlikely((__pyx_v_n == (Py_ssize_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 91, __pyx_L3_error)
     if (values[2]) {
-      __pyx_v_utf = __Pyx_PyInt_As_char(values[2]); if (unlikely((__pyx_v_utf == (char)-1) && PyErr_Occurred())) __PYX_ERR(0, 95, __pyx_L3_error)
+      __pyx_v_utf = __Pyx_PyInt_As_char(values[2]); if (unlikely((__pyx_v_utf == (char)-1) && PyErr_Occurred())) __PYX_ERR(0, 91, __pyx_L3_error)
     } else {
       __pyx_v_utf = ((char)0);
     }
   }
   goto __pyx_L4_argument_unpacking_done;
   __pyx_L5_argtuple_error:;
-  __Pyx_RaiseArgtupleInvalid("unpack_byte_array", 0, 2, 3, PyTuple_GET_SIZE(__pyx_args)); __PYX_ERR(0, 95, __pyx_L3_error)
+  __Pyx_RaiseArgtupleInvalid("unpack_byte_array", 0, 2, 3, PyTuple_GET_SIZE(__pyx_args)); __PYX_ERR(0, 91, __pyx_L3_error)
   __pyx_L3_error:;
   __Pyx_AddTraceback("fastparquet.speedups.unpack_byte_array", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __Pyx_RefNannyFinishContext();
@@ -3273,6 +3251,7 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
   Py_ssize_t __pyx_v_i;
   char *__pyx_v_ptr;
   int __pyx_v_itemlen;
+  int __pyx_v_bytecount;
   PyArrayObject *__pyx_v_out = 0;
   __Pyx_LocalBuf_ND __pyx_pybuffernd_out;
   __Pyx_Buffer __pyx_pybuffer_out;
@@ -3286,7 +3265,8 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
   PyObject *__pyx_t_6 = NULL;
   PyArrayObject *__pyx_t_7 = NULL;
   int __pyx_t_8;
-  PyObject **__pyx_t_9;
+  int __pyx_t_9;
+  PyObject **__pyx_t_10;
   int __pyx_lineno = 0;
   const char *__pyx_filename = NULL;
   int __pyx_clineno = 0;
@@ -3296,20 +3276,20 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
   __pyx_pybuffernd_out.data = NULL;
   __pyx_pybuffernd_out.rcbuffer = &__pyx_pybuffer_out;
 
-  /* "fastparquet/speedups.pyx":101
+  /* "fastparquet/speedups.pyx":97
  *     """
  *     cdef:
  *         Py_ssize_t i = 0             # <<<<<<<<<<<<<<
  *         char* ptr = <char*>&raw_bytes[0]
- *         int itemlen
+ *         int itemlen, bytecount
  */
   __pyx_v_i = 0;
 
-  /* "fastparquet/speedups.pyx":102
+  /* "fastparquet/speedups.pyx":98
  *     cdef:
  *         Py_ssize_t i = 0
  *         char* ptr = <char*>&raw_bytes[0]             # <<<<<<<<<<<<<<
- *         int itemlen
+ *         int itemlen, bytecount
  *         np.ndarray[object, ndim=1] out = np.empty(n, dtype="object")
  */
   __pyx_t_1 = 0;
@@ -3320,44 +3300,44 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
   } else if (unlikely(__pyx_t_1 >= __pyx_v_raw_bytes.shape[0])) __pyx_t_2 = 0;
   if (unlikely(__pyx_t_2 != -1)) {
     __Pyx_RaiseBufferIndexError(__pyx_t_2);
-    __PYX_ERR(0, 102, __pyx_L1_error)
+    __PYX_ERR(0, 98, __pyx_L1_error)
   }
   __pyx_v_ptr = ((char *)(&(*((unsigned char const  *) ( /* dim=0 */ ((char *) (((unsigned char const  *) __pyx_v_raw_bytes.data) + __pyx_t_1)) )))));
 
-  /* "fastparquet/speedups.pyx":104
+  /* "fastparquet/speedups.pyx":100
  *         char* ptr = <char*>&raw_bytes[0]
- *         int itemlen
+ *         int itemlen, bytecount
  *         np.ndarray[object, ndim=1] out = np.empty(n, dtype="object")             # <<<<<<<<<<<<<<
  * 
- *     while i < n:
+ *     bytecount = raw_bytes.shape[0]
  */
-  __Pyx_GetModuleGlobalName(__pyx_t_3, __pyx_n_s_np); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 104, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_3, __pyx_n_s_np); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 100, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_3);
-  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_3, __pyx_n_s_empty); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 104, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_3, __pyx_n_s_empty); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 100, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
-  __pyx_t_3 = PyInt_FromSsize_t(__pyx_v_n); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 104, __pyx_L1_error)
+  __pyx_t_3 = PyInt_FromSsize_t(__pyx_v_n); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 100, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_3);
-  __pyx_t_5 = PyTuple_New(1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 104, __pyx_L1_error)
+  __pyx_t_5 = PyTuple_New(1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 100, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __Pyx_GIVEREF(__pyx_t_3);
   PyTuple_SET_ITEM(__pyx_t_5, 0, __pyx_t_3);
   __pyx_t_3 = 0;
-  __pyx_t_3 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 104, __pyx_L1_error)
+  __pyx_t_3 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 100, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_3);
-  if (PyDict_SetItem(__pyx_t_3, __pyx_n_s_dtype, __pyx_n_u_object) < 0) __PYX_ERR(0, 104, __pyx_L1_error)
-  __pyx_t_6 = __Pyx_PyObject_Call(__pyx_t_4, __pyx_t_5, __pyx_t_3); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 104, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_t_3, __pyx_n_s_dtype, __pyx_n_u_object) < 0) __PYX_ERR(0, 100, __pyx_L1_error)
+  __pyx_t_6 = __Pyx_PyObject_Call(__pyx_t_4, __pyx_t_5, __pyx_t_3); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 100, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_6);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
-  if (!(likely(((__pyx_t_6) == Py_None) || likely(__Pyx_TypeTest(__pyx_t_6, __pyx_ptype_5numpy_ndarray))))) __PYX_ERR(0, 104, __pyx_L1_error)
+  if (!(likely(((__pyx_t_6) == Py_None) || likely(__Pyx_TypeTest(__pyx_t_6, __pyx_ptype_5numpy_ndarray))))) __PYX_ERR(0, 100, __pyx_L1_error)
   __pyx_t_7 = ((PyArrayObject *)__pyx_t_6);
   {
     __Pyx_BufFmt_StackElem __pyx_stack[1];
     if (unlikely(__Pyx_GetBufferAndValidate(&__pyx_pybuffernd_out.rcbuffer->pybuffer, (PyObject*)__pyx_t_7, &__Pyx_TypeInfo_object, PyBUF_FORMAT| PyBUF_STRIDES| PyBUF_WRITABLE, 1, 0, __pyx_stack) == -1)) {
       __pyx_v_out = ((PyArrayObject *)Py_None); __Pyx_INCREF(Py_None); __pyx_pybuffernd_out.rcbuffer->pybuffer.buf = NULL;
-      __PYX_ERR(0, 104, __pyx_L1_error)
+      __PYX_ERR(0, 100, __pyx_L1_error)
     } else {__pyx_pybuffernd_out.diminfo[0].strides = __pyx_pybuffernd_out.rcbuffer->pybuffer.strides[0]; __pyx_pybuffernd_out.diminfo[0].shape = __pyx_pybuffernd_out.rcbuffer->pybuffer.shape[0];
     }
   }
@@ -3365,19 +3345,36 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
   __pyx_v_out = ((PyArrayObject *)__pyx_t_6);
   __pyx_t_6 = 0;
 
-  /* "fastparquet/speedups.pyx":106
+  /* "fastparquet/speedups.pyx":102
  *         np.ndarray[object, ndim=1] out = np.empty(n, dtype="object")
  * 
- *     while i < n:             # <<<<<<<<<<<<<<
+ *     bytecount = raw_bytes.shape[0]             # <<<<<<<<<<<<<<
+ *     while i < n and bytecount > 0:
+ * 
+ */
+  __pyx_v_bytecount = (__pyx_v_raw_bytes.shape[0]);
+
+  /* "fastparquet/speedups.pyx":103
+ * 
+ *     bytecount = raw_bytes.shape[0]
+ *     while i < n and bytecount > 0:             # <<<<<<<<<<<<<<
  * 
  *         itemlen = (<int*> ptr)[0]
  */
   while (1) {
-    __pyx_t_8 = ((__pyx_v_i < __pyx_v_n) != 0);
+    __pyx_t_9 = ((__pyx_v_i < __pyx_v_n) != 0);
+    if (__pyx_t_9) {
+    } else {
+      __pyx_t_8 = __pyx_t_9;
+      goto __pyx_L5_bool_binop_done;
+    }
+    __pyx_t_9 = ((__pyx_v_bytecount > 0) != 0);
+    __pyx_t_8 = __pyx_t_9;
+    __pyx_L5_bool_binop_done:;
     if (!__pyx_t_8) break;
 
-    /* "fastparquet/speedups.pyx":108
- *     while i < n:
+    /* "fastparquet/speedups.pyx":105
+ *     while i < n and bytecount > 0:
  * 
  *         itemlen = (<int*> ptr)[0]             # <<<<<<<<<<<<<<
  *         ptr += 4
@@ -3385,7 +3382,7 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
  */
     __pyx_v_itemlen = (((int *)__pyx_v_ptr)[0]);
 
-    /* "fastparquet/speedups.pyx":109
+    /* "fastparquet/speedups.pyx":106
  * 
  *         itemlen = (<int*> ptr)[0]
  *         ptr += 4             # <<<<<<<<<<<<<<
@@ -3394,7 +3391,7 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
  */
     __pyx_v_ptr = (__pyx_v_ptr + 4);
 
-    /* "fastparquet/speedups.pyx":110
+    /* "fastparquet/speedups.pyx":107
  *         itemlen = (<int*> ptr)[0]
  *         ptr += 4
  *         if utf:             # <<<<<<<<<<<<<<
@@ -3404,14 +3401,14 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
     __pyx_t_8 = (__pyx_v_utf != 0);
     if (__pyx_t_8) {
 
-      /* "fastparquet/speedups.pyx":111
+      /* "fastparquet/speedups.pyx":108
  *         ptr += 4
  *         if utf:
  *             out[i] = PyUnicode_DecodeUTF8(ptr, itemlen, "ignore")             # <<<<<<<<<<<<<<
  *         else:
  *             out[i] = PyBytes_FromStringAndSize(ptr, itemlen)
  */
-      __pyx_t_6 = PyUnicode_DecodeUTF8(__pyx_v_ptr, __pyx_v_itemlen, ((char *)"ignore")); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 111, __pyx_L1_error)
+      __pyx_t_6 = PyUnicode_DecodeUTF8(__pyx_v_ptr, __pyx_v_itemlen, ((char *)"ignore")); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 108, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_6);
       __pyx_t_1 = __pyx_v_i;
       __pyx_t_2 = -1;
@@ -3421,34 +3418,34 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
       } else if (unlikely(__pyx_t_1 >= __pyx_pybuffernd_out.diminfo[0].shape)) __pyx_t_2 = 0;
       if (unlikely(__pyx_t_2 != -1)) {
         __Pyx_RaiseBufferIndexError(__pyx_t_2);
-        __PYX_ERR(0, 111, __pyx_L1_error)
+        __PYX_ERR(0, 108, __pyx_L1_error)
       }
-      __pyx_t_9 = __Pyx_BufPtrStrided1d(PyObject **, __pyx_pybuffernd_out.rcbuffer->pybuffer.buf, __pyx_t_1, __pyx_pybuffernd_out.diminfo[0].strides);
-      __Pyx_GOTREF(*__pyx_t_9);
-      __Pyx_INCREF(__pyx_t_6); __Pyx_DECREF(*__pyx_t_9);
-      *__pyx_t_9 = __pyx_t_6;
-      __Pyx_GIVEREF(*__pyx_t_9);
+      __pyx_t_10 = __Pyx_BufPtrStrided1d(PyObject **, __pyx_pybuffernd_out.rcbuffer->pybuffer.buf, __pyx_t_1, __pyx_pybuffernd_out.diminfo[0].strides);
+      __Pyx_GOTREF(*__pyx_t_10);
+      __Pyx_INCREF(__pyx_t_6); __Pyx_DECREF(*__pyx_t_10);
+      *__pyx_t_10 = __pyx_t_6;
+      __Pyx_GIVEREF(*__pyx_t_10);
       __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
 
-      /* "fastparquet/speedups.pyx":110
+      /* "fastparquet/speedups.pyx":107
  *         itemlen = (<int*> ptr)[0]
  *         ptr += 4
  *         if utf:             # <<<<<<<<<<<<<<
  *             out[i] = PyUnicode_DecodeUTF8(ptr, itemlen, "ignore")
  *         else:
  */
-      goto __pyx_L5;
+      goto __pyx_L7;
     }
 
-    /* "fastparquet/speedups.pyx":113
+    /* "fastparquet/speedups.pyx":110
  *             out[i] = PyUnicode_DecodeUTF8(ptr, itemlen, "ignore")
  *         else:
  *             out[i] = PyBytes_FromStringAndSize(ptr, itemlen)             # <<<<<<<<<<<<<<
+ *         print(out[i])
  *         ptr += itemlen
- *         i += 1
  */
     /*else*/ {
-      __pyx_t_6 = PyBytes_FromStringAndSize(__pyx_v_ptr, __pyx_v_itemlen); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 113, __pyx_L1_error)
+      __pyx_t_6 = PyBytes_FromStringAndSize(__pyx_v_ptr, __pyx_v_itemlen); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 110, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_6);
       __pyx_t_1 = __pyx_v_i;
       __pyx_t_2 = -1;
@@ -3458,29 +3455,62 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
       } else if (unlikely(__pyx_t_1 >= __pyx_pybuffernd_out.diminfo[0].shape)) __pyx_t_2 = 0;
       if (unlikely(__pyx_t_2 != -1)) {
         __Pyx_RaiseBufferIndexError(__pyx_t_2);
-        __PYX_ERR(0, 113, __pyx_L1_error)
+        __PYX_ERR(0, 110, __pyx_L1_error)
       }
-      __pyx_t_9 = __Pyx_BufPtrStrided1d(PyObject **, __pyx_pybuffernd_out.rcbuffer->pybuffer.buf, __pyx_t_1, __pyx_pybuffernd_out.diminfo[0].strides);
-      __Pyx_GOTREF(*__pyx_t_9);
-      __Pyx_INCREF(__pyx_t_6); __Pyx_DECREF(*__pyx_t_9);
-      *__pyx_t_9 = __pyx_t_6;
-      __Pyx_GIVEREF(*__pyx_t_9);
+      __pyx_t_10 = __Pyx_BufPtrStrided1d(PyObject **, __pyx_pybuffernd_out.rcbuffer->pybuffer.buf, __pyx_t_1, __pyx_pybuffernd_out.diminfo[0].strides);
+      __Pyx_GOTREF(*__pyx_t_10);
+      __Pyx_INCREF(__pyx_t_6); __Pyx_DECREF(*__pyx_t_10);
+      *__pyx_t_10 = __pyx_t_6;
+      __Pyx_GIVEREF(*__pyx_t_10);
       __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
     }
-    __pyx_L5:;
+    __pyx_L7:;
 
-    /* "fastparquet/speedups.pyx":114
+    /* "fastparquet/speedups.pyx":111
  *         else:
  *             out[i] = PyBytes_FromStringAndSize(ptr, itemlen)
+ *         print(out[i])             # <<<<<<<<<<<<<<
+ *         ptr += itemlen
+ *         bytecount -= 4 + itemlen
+ */
+    __pyx_t_1 = __pyx_v_i;
+    __pyx_t_2 = -1;
+    if (__pyx_t_1 < 0) {
+      __pyx_t_1 += __pyx_pybuffernd_out.diminfo[0].shape;
+      if (unlikely(__pyx_t_1 < 0)) __pyx_t_2 = 0;
+    } else if (unlikely(__pyx_t_1 >= __pyx_pybuffernd_out.diminfo[0].shape)) __pyx_t_2 = 0;
+    if (unlikely(__pyx_t_2 != -1)) {
+      __Pyx_RaiseBufferIndexError(__pyx_t_2);
+      __PYX_ERR(0, 111, __pyx_L1_error)
+    }
+    __pyx_t_6 = (PyObject *) *__Pyx_BufPtrStrided1d(PyObject **, __pyx_pybuffernd_out.rcbuffer->pybuffer.buf, __pyx_t_1, __pyx_pybuffernd_out.diminfo[0].strides);
+    __Pyx_INCREF((PyObject*)__pyx_t_6);
+    __pyx_t_3 = __Pyx_PyObject_CallOneArg(__pyx_builtin_print, __pyx_t_6); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 111, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_3);
+    __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
+    __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
+
+    /* "fastparquet/speedups.pyx":112
+ *             out[i] = PyBytes_FromStringAndSize(ptr, itemlen)
+ *         print(out[i])
  *         ptr += itemlen             # <<<<<<<<<<<<<<
+ *         bytecount -= 4 + itemlen
  *         i += 1
- * 
  */
     __pyx_v_ptr = (__pyx_v_ptr + __pyx_v_itemlen);
 
-    /* "fastparquet/speedups.pyx":115
- *             out[i] = PyBytes_FromStringAndSize(ptr, itemlen)
+    /* "fastparquet/speedups.pyx":113
+ *         print(out[i])
  *         ptr += itemlen
+ *         bytecount -= 4 + itemlen             # <<<<<<<<<<<<<<
+ *         i += 1
+ * 
+ */
+    __pyx_v_bytecount = (__pyx_v_bytecount - (4 + __pyx_v_itemlen));
+
+    /* "fastparquet/speedups.pyx":114
+ *         ptr += itemlen
+ *         bytecount -= 4 + itemlen
  *         i += 1             # <<<<<<<<<<<<<<
  * 
  *     return out
@@ -3488,7 +3518,7 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
     __pyx_v_i = (__pyx_v_i + 1);
   }
 
-  /* "fastparquet/speedups.pyx":117
+  /* "fastparquet/speedups.pyx":116
  *         i += 1
  * 
  *     return out             # <<<<<<<<<<<<<<
@@ -3498,7 +3528,7 @@ static PyObject *__pyx_pf_11fastparquet_8speedups_4unpack_byte_array(CYTHON_UNUS
   __pyx_r = ((PyObject *)__pyx_v_out);
   goto __pyx_L0;
 
-  /* "fastparquet/speedups.pyx":95
+  /* "fastparquet/speedups.pyx":91
  * 
  * 
  * def unpack_byte_array(const unsigned char[::1] raw_bytes, Py_ssize_t n, const char utf=False):             # <<<<<<<<<<<<<<
@@ -18356,6 +18386,7 @@ static __Pyx_StringTabEntry __pyx_string_tab[] = {
   {&__pyx_n_s_array, __pyx_k_array, sizeof(__pyx_k_array), 0, 0, 1, 1},
   {&__pyx_n_s_array_encode_utf8, __pyx_k_array_encode_utf8, sizeof(__pyx_k_array_encode_utf8), 0, 0, 1, 1},
   {&__pyx_n_s_base, __pyx_k_base, sizeof(__pyx_k_base), 0, 0, 1, 1},
+  {&__pyx_n_s_bytecount, __pyx_k_bytecount, sizeof(__pyx_k_bytecount), 0, 0, 1, 1},
   {&__pyx_n_s_c, __pyx_k_c, sizeof(__pyx_k_c), 0, 0, 1, 1},
   {&__pyx_n_u_c, __pyx_k_c, sizeof(__pyx_k_c), 0, 1, 0, 1},
   {&__pyx_n_s_class, __pyx_k_class, sizeof(__pyx_k_class), 0, 0, 1, 1},
@@ -18409,6 +18440,7 @@ static __Pyx_StringTabEntry __pyx_string_tab[] = {
   {&__pyx_n_s_pack, __pyx_k_pack, sizeof(__pyx_k_pack), 0, 0, 1, 1},
   {&__pyx_n_s_pack_byte_array, __pyx_k_pack_byte_array, sizeof(__pyx_k_pack_byte_array), 0, 0, 1, 1},
   {&__pyx_n_s_pickle, __pyx_k_pickle, sizeof(__pyx_k_pickle), 0, 0, 1, 1},
+  {&__pyx_n_s_print, __pyx_k_print, sizeof(__pyx_k_print), 0, 0, 1, 1},
   {&__pyx_n_s_ptr, __pyx_k_ptr, sizeof(__pyx_k_ptr), 0, 0, 1, 1},
   {&__pyx_n_s_pyx_PickleError, __pyx_k_pyx_PickleError, sizeof(__pyx_k_pyx_PickleError), 0, 0, 1, 1},
   {&__pyx_n_s_pyx_checksum, __pyx_k_pyx_checksum, sizeof(__pyx_k_pyx_checksum), 0, 0, 1, 1},
@@ -18451,6 +18483,7 @@ static CYTHON_SMALL_CODE int __Pyx_InitCachedBuiltins(void) {
   __pyx_builtin_object = __Pyx_GetBuiltinName(__pyx_n_s_object); if (!__pyx_builtin_object) __PYX_ERR(0, 46, __pyx_L1_error)
   __pyx_builtin_range = __Pyx_GetBuiltinName(__pyx_n_s_range); if (!__pyx_builtin_range) __PYX_ERR(0, 47, __pyx_L1_error)
   __pyx_builtin_TypeError = __Pyx_GetBuiltinName(__pyx_n_s_TypeError); if (!__pyx_builtin_TypeError) __PYX_ERR(0, 71, __pyx_L1_error)
+  __pyx_builtin_print = __Pyx_GetBuiltinName(__pyx_n_s_print); if (!__pyx_builtin_print) __PYX_ERR(0, 111, __pyx_L1_error)
   __pyx_builtin_ImportError = __Pyx_GetBuiltinName(__pyx_n_s_ImportError); if (!__pyx_builtin_ImportError) __PYX_ERR(1, 947, __pyx_L1_error)
   __pyx_builtin_ValueError = __Pyx_GetBuiltinName(__pyx_n_s_ValueError); if (!__pyx_builtin_ValueError) __PYX_ERR(2, 133, __pyx_L1_error)
   __pyx_builtin_MemoryError = __Pyx_GetBuiltinName(__pyx_n_s_MemoryError); if (!__pyx_builtin_MemoryError) __PYX_ERR(2, 148, __pyx_L1_error)
@@ -18727,17 +18760,17 @@ static CYTHON_SMALL_CODE int __Pyx_InitCachedConstants(void) {
   __Pyx_GIVEREF(__pyx_tuple__25);
   __pyx_codeobj__26 = (PyObject*)__Pyx_PyCode_New(1, 0, 9, 0, CO_OPTIMIZED|CO_NEWLOCALS, __pyx_empty_bytes, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_tuple__25, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_kp_s_fastparquet_speedups_pyx, __pyx_n_s_pack_byte_array, 54, __pyx_empty_bytes); if (unlikely(!__pyx_codeobj__26)) __PYX_ERR(0, 54, __pyx_L1_error)
 
-  /* "fastparquet/speedups.pyx":95
+  /* "fastparquet/speedups.pyx":91
  * 
  * 
  * def unpack_byte_array(const unsigned char[::1] raw_bytes, Py_ssize_t n, const char utf=False):             # <<<<<<<<<<<<<<
  *     """
  *     Unpack a variable length byte array column.
  */
-  __pyx_tuple__27 = PyTuple_Pack(7, __pyx_n_s_raw_bytes, __pyx_n_s_n, __pyx_n_s_utf, __pyx_n_s_i, __pyx_n_s_ptr, __pyx_n_s_itemlen, __pyx_n_s_out); if (unlikely(!__pyx_tuple__27)) __PYX_ERR(0, 95, __pyx_L1_error)
+  __pyx_tuple__27 = PyTuple_Pack(8, __pyx_n_s_raw_bytes, __pyx_n_s_n, __pyx_n_s_utf, __pyx_n_s_i, __pyx_n_s_ptr, __pyx_n_s_itemlen, __pyx_n_s_bytecount, __pyx_n_s_out); if (unlikely(!__pyx_tuple__27)) __PYX_ERR(0, 91, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__27);
   __Pyx_GIVEREF(__pyx_tuple__27);
-  __pyx_codeobj__28 = (PyObject*)__Pyx_PyCode_New(3, 0, 7, 0, CO_OPTIMIZED|CO_NEWLOCALS, __pyx_empty_bytes, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_tuple__27, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_kp_s_fastparquet_speedups_pyx, __pyx_n_s_unpack_byte_array, 95, __pyx_empty_bytes); if (unlikely(!__pyx_codeobj__28)) __PYX_ERR(0, 95, __pyx_L1_error)
+  __pyx_codeobj__28 = (PyObject*)__Pyx_PyCode_New(3, 0, 8, 0, CO_OPTIMIZED|CO_NEWLOCALS, __pyx_empty_bytes, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_tuple__27, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_kp_s_fastparquet_speedups_pyx, __pyx_n_s_unpack_byte_array, 91, __pyx_empty_bytes); if (unlikely(!__pyx_codeobj__28)) __PYX_ERR(0, 91, __pyx_L1_error)
 
   /* "View.MemoryView":286
  *         return self.name
@@ -19260,16 +19293,16 @@ if (!__Pyx_RefNanny) {
   if (PyDict_SetItem(__pyx_d, __pyx_n_s_pack_byte_array, __pyx_t_1) < 0) __PYX_ERR(0, 54, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
 
-  /* "fastparquet/speedups.pyx":95
+  /* "fastparquet/speedups.pyx":91
  * 
  * 
  * def unpack_byte_array(const unsigned char[::1] raw_bytes, Py_ssize_t n, const char utf=False):             # <<<<<<<<<<<<<<
  *     """
  *     Unpack a variable length byte array column.
  */
-  __pyx_t_1 = PyCFunction_NewEx(&__pyx_mdef_11fastparquet_8speedups_5unpack_byte_array, NULL, __pyx_n_s_fastparquet_speedups); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 95, __pyx_L1_error)
+  __pyx_t_1 = PyCFunction_NewEx(&__pyx_mdef_11fastparquet_8speedups_5unpack_byte_array, NULL, __pyx_n_s_fastparquet_speedups); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 91, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  if (PyDict_SetItem(__pyx_d, __pyx_n_s_unpack_byte_array, __pyx_t_1) < 0) __PYX_ERR(0, 95, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_d, __pyx_n_s_unpack_byte_array, __pyx_t_1) < 0) __PYX_ERR(0, 91, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
 
   /* "fastparquet/speedups.pyx":1
@@ -20604,6 +20637,208 @@ bad:
     return -1;
 }
 
+/* PyCFunctionFastCall */
+  #if CYTHON_FAST_PYCCALL
+static CYTHON_INLINE PyObject * __Pyx_PyCFunction_FastCall(PyObject *func_obj, PyObject **args, Py_ssize_t nargs) {
+    PyCFunctionObject *func = (PyCFunctionObject*)func_obj;
+    PyCFunction meth = PyCFunction_GET_FUNCTION(func);
+    PyObject *self = PyCFunction_GET_SELF(func);
+    int flags = PyCFunction_GET_FLAGS(func);
+    assert(PyCFunction_Check(func));
+    assert(METH_FASTCALL == (flags & ~(METH_CLASS | METH_STATIC | METH_COEXIST | METH_KEYWORDS | METH_STACKLESS)));
+    assert(nargs >= 0);
+    assert(nargs == 0 || args != NULL);
+    /* _PyCFunction_FastCallDict() must not be called with an exception set,
+       because it may clear it (directly or indirectly) and so the
+       caller loses its exception */
+    assert(!PyErr_Occurred());
+    if ((PY_VERSION_HEX < 0x030700A0) || unlikely(flags & METH_KEYWORDS)) {
+        return (*((__Pyx_PyCFunctionFastWithKeywords)(void*)meth)) (self, args, nargs, NULL);
+    } else {
+        return (*((__Pyx_PyCFunctionFast)(void*)meth)) (self, args, nargs);
+    }
+}
+#endif
+
+/* PyFunctionFastCall */
+  #if CYTHON_FAST_PYCALL
+static PyObject* __Pyx_PyFunction_FastCallNoKw(PyCodeObject *co, PyObject **args, Py_ssize_t na,
+                                               PyObject *globals) {
+    PyFrameObject *f;
+    PyThreadState *tstate = __Pyx_PyThreadState_Current;
+    PyObject **fastlocals;
+    Py_ssize_t i;
+    PyObject *result;
+    assert(globals != NULL);
+    /* XXX Perhaps we should create a specialized
+       PyFrame_New() that doesn't take locals, but does
+       take builtins without sanity checking them.
+       */
+    assert(tstate != NULL);
+    f = PyFrame_New(tstate, co, globals, NULL);
+    if (f == NULL) {
+        return NULL;
+    }
+    fastlocals = __Pyx_PyFrame_GetLocalsplus(f);
+    for (i = 0; i < na; i++) {
+        Py_INCREF(*args);
+        fastlocals[i] = *args++;
+    }
+    result = PyEval_EvalFrameEx(f,0);
+    ++tstate->recursion_depth;
+    Py_DECREF(f);
+    --tstate->recursion_depth;
+    return result;
+}
+#if 1 || PY_VERSION_HEX < 0x030600B1
+static PyObject *__Pyx_PyFunction_FastCallDict(PyObject *func, PyObject **args, Py_ssize_t nargs, PyObject *kwargs) {
+    PyCodeObject *co = (PyCodeObject *)PyFunction_GET_CODE(func);
+    PyObject *globals = PyFunction_GET_GLOBALS(func);
+    PyObject *argdefs = PyFunction_GET_DEFAULTS(func);
+    PyObject *closure;
+#if PY_MAJOR_VERSION >= 3
+    PyObject *kwdefs;
+#endif
+    PyObject *kwtuple, **k;
+    PyObject **d;
+    Py_ssize_t nd;
+    Py_ssize_t nk;
+    PyObject *result;
+    assert(kwargs == NULL || PyDict_Check(kwargs));
+    nk = kwargs ? PyDict_Size(kwargs) : 0;
+    if (Py_EnterRecursiveCall((char*)" while calling a Python object")) {
+        return NULL;
+    }
+    if (
+#if PY_MAJOR_VERSION >= 3
+            co->co_kwonlyargcount == 0 &&
+#endif
+            likely(kwargs == NULL || nk == 0) &&
+            co->co_flags == (CO_OPTIMIZED | CO_NEWLOCALS | CO_NOFREE)) {
+        if (argdefs == NULL && co->co_argcount == nargs) {
+            result = __Pyx_PyFunction_FastCallNoKw(co, args, nargs, globals);
+            goto done;
+        }
+        else if (nargs == 0 && argdefs != NULL
+                 && co->co_argcount == Py_SIZE(argdefs)) {
+            /* function called with no arguments, but all parameters have
+               a default value: use default values as arguments .*/
+            args = &PyTuple_GET_ITEM(argdefs, 0);
+            result =__Pyx_PyFunction_FastCallNoKw(co, args, Py_SIZE(argdefs), globals);
+            goto done;
+        }
+    }
+    if (kwargs != NULL) {
+        Py_ssize_t pos, i;
+        kwtuple = PyTuple_New(2 * nk);
+        if (kwtuple == NULL) {
+            result = NULL;
+            goto done;
+        }
+        k = &PyTuple_GET_ITEM(kwtuple, 0);
+        pos = i = 0;
+        while (PyDict_Next(kwargs, &pos, &k[i], &k[i+1])) {
+            Py_INCREF(k[i]);
+            Py_INCREF(k[i+1]);
+            i += 2;
+        }
+        nk = i / 2;
+    }
+    else {
+        kwtuple = NULL;
+        k = NULL;
+    }
+    closure = PyFunction_GET_CLOSURE(func);
+#if PY_MAJOR_VERSION >= 3
+    kwdefs = PyFunction_GET_KW_DEFAULTS(func);
+#endif
+    if (argdefs != NULL) {
+        d = &PyTuple_GET_ITEM(argdefs, 0);
+        nd = Py_SIZE(argdefs);
+    }
+    else {
+        d = NULL;
+        nd = 0;
+    }
+#if PY_MAJOR_VERSION >= 3
+    result = PyEval_EvalCodeEx((PyObject*)co, globals, (PyObject *)NULL,
+                               args, (int)nargs,
+                               k, (int)nk,
+                               d, (int)nd, kwdefs, closure);
+#else
+    result = PyEval_EvalCodeEx(co, globals, (PyObject *)NULL,
+                               args, (int)nargs,
+                               k, (int)nk,
+                               d, (int)nd, closure);
+#endif
+    Py_XDECREF(kwtuple);
+done:
+    Py_LeaveRecursiveCall();
+    return result;
+}
+#endif
+#endif
+
+/* PyObjectCallMethO */
+  #if CYTHON_COMPILING_IN_CPYTHON
+static CYTHON_INLINE PyObject* __Pyx_PyObject_CallMethO(PyObject *func, PyObject *arg) {
+    PyObject *self, *result;
+    PyCFunction cfunc;
+    cfunc = PyCFunction_GET_FUNCTION(func);
+    self = PyCFunction_GET_SELF(func);
+    if (unlikely(Py_EnterRecursiveCall((char*)" while calling a Python object")))
+        return NULL;
+    result = cfunc(self, arg);
+    Py_LeaveRecursiveCall();
+    if (unlikely(!result) && unlikely(!PyErr_Occurred())) {
+        PyErr_SetString(
+            PyExc_SystemError,
+            "NULL result without error in PyObject_Call");
+    }
+    return result;
+}
+#endif
+
+/* PyObjectCallOneArg */
+  #if CYTHON_COMPILING_IN_CPYTHON
+static PyObject* __Pyx__PyObject_CallOneArg(PyObject *func, PyObject *arg) {
+    PyObject *result;
+    PyObject *args = PyTuple_New(1);
+    if (unlikely(!args)) return NULL;
+    Py_INCREF(arg);
+    PyTuple_SET_ITEM(args, 0, arg);
+    result = __Pyx_PyObject_Call(func, args, NULL);
+    Py_DECREF(args);
+    return result;
+}
+static CYTHON_INLINE PyObject* __Pyx_PyObject_CallOneArg(PyObject *func, PyObject *arg) {
+#if CYTHON_FAST_PYCALL
+    if (PyFunction_Check(func)) {
+        return __Pyx_PyFunction_FastCall(func, &arg, 1);
+    }
+#endif
+    if (likely(PyCFunction_Check(func))) {
+        if (likely(PyCFunction_GET_FLAGS(func) & METH_O)) {
+            return __Pyx_PyObject_CallMethO(func, arg);
+#if CYTHON_FAST_PYCCALL
+        } else if (PyCFunction_GET_FLAGS(func) & METH_FASTCALL) {
+            return __Pyx_PyCFunction_FastCall(func, &arg, 1);
+#endif
+        }
+    }
+    return __Pyx__PyObject_CallOneArg(func, arg);
+}
+#else
+static CYTHON_INLINE PyObject* __Pyx_PyObject_CallOneArg(PyObject *func, PyObject *arg) {
+    PyObject *result;
+    PyObject *args = PyTuple_Pack(1, arg);
+    if (unlikely(!args)) return NULL;
+    result = __Pyx_PyObject_Call(func, args, NULL);
+    Py_DECREF(args);
+    return result;
+}
+#endif
+
 /* MemviewSliceInit */
   static int
 __Pyx_init_memviewslice(struct __pyx_memoryview_obj *memview,
@@ -20891,148 +21126,6 @@ bad:
     return -1;
 }
 
-/* PyCFunctionFastCall */
-  #if CYTHON_FAST_PYCCALL
-static CYTHON_INLINE PyObject * __Pyx_PyCFunction_FastCall(PyObject *func_obj, PyObject **args, Py_ssize_t nargs) {
-    PyCFunctionObject *func = (PyCFunctionObject*)func_obj;
-    PyCFunction meth = PyCFunction_GET_FUNCTION(func);
-    PyObject *self = PyCFunction_GET_SELF(func);
-    int flags = PyCFunction_GET_FLAGS(func);
-    assert(PyCFunction_Check(func));
-    assert(METH_FASTCALL == (flags & ~(METH_CLASS | METH_STATIC | METH_COEXIST | METH_KEYWORDS | METH_STACKLESS)));
-    assert(nargs >= 0);
-    assert(nargs == 0 || args != NULL);
-    /* _PyCFunction_FastCallDict() must not be called with an exception set,
-       because it may clear it (directly or indirectly) and so the
-       caller loses its exception */
-    assert(!PyErr_Occurred());
-    if ((PY_VERSION_HEX < 0x030700A0) || unlikely(flags & METH_KEYWORDS)) {
-        return (*((__Pyx_PyCFunctionFastWithKeywords)(void*)meth)) (self, args, nargs, NULL);
-    } else {
-        return (*((__Pyx_PyCFunctionFast)(void*)meth)) (self, args, nargs);
-    }
-}
-#endif
-
-/* PyFunctionFastCall */
-  #if CYTHON_FAST_PYCALL
-static PyObject* __Pyx_PyFunction_FastCallNoKw(PyCodeObject *co, PyObject **args, Py_ssize_t na,
-                                               PyObject *globals) {
-    PyFrameObject *f;
-    PyThreadState *tstate = __Pyx_PyThreadState_Current;
-    PyObject **fastlocals;
-    Py_ssize_t i;
-    PyObject *result;
-    assert(globals != NULL);
-    /* XXX Perhaps we should create a specialized
-       PyFrame_New() that doesn't take locals, but does
-       take builtins without sanity checking them.
-       */
-    assert(tstate != NULL);
-    f = PyFrame_New(tstate, co, globals, NULL);
-    if (f == NULL) {
-        return NULL;
-    }
-    fastlocals = __Pyx_PyFrame_GetLocalsplus(f);
-    for (i = 0; i < na; i++) {
-        Py_INCREF(*args);
-        fastlocals[i] = *args++;
-    }
-    result = PyEval_EvalFrameEx(f,0);
-    ++tstate->recursion_depth;
-    Py_DECREF(f);
-    --tstate->recursion_depth;
-    return result;
-}
-#if 1 || PY_VERSION_HEX < 0x030600B1
-static PyObject *__Pyx_PyFunction_FastCallDict(PyObject *func, PyObject **args, Py_ssize_t nargs, PyObject *kwargs) {
-    PyCodeObject *co = (PyCodeObject *)PyFunction_GET_CODE(func);
-    PyObject *globals = PyFunction_GET_GLOBALS(func);
-    PyObject *argdefs = PyFunction_GET_DEFAULTS(func);
-    PyObject *closure;
-#if PY_MAJOR_VERSION >= 3
-    PyObject *kwdefs;
-#endif
-    PyObject *kwtuple, **k;
-    PyObject **d;
-    Py_ssize_t nd;
-    Py_ssize_t nk;
-    PyObject *result;
-    assert(kwargs == NULL || PyDict_Check(kwargs));
-    nk = kwargs ? PyDict_Size(kwargs) : 0;
-    if (Py_EnterRecursiveCall((char*)" while calling a Python object")) {
-        return NULL;
-    }
-    if (
-#if PY_MAJOR_VERSION >= 3
-            co->co_kwonlyargcount == 0 &&
-#endif
-            likely(kwargs == NULL || nk == 0) &&
-            co->co_flags == (CO_OPTIMIZED | CO_NEWLOCALS | CO_NOFREE)) {
-        if (argdefs == NULL && co->co_argcount == nargs) {
-            result = __Pyx_PyFunction_FastCallNoKw(co, args, nargs, globals);
-            goto done;
-        }
-        else if (nargs == 0 && argdefs != NULL
-                 && co->co_argcount == Py_SIZE(argdefs)) {
-            /* function called with no arguments, but all parameters have
-               a default value: use default values as arguments .*/
-            args = &PyTuple_GET_ITEM(argdefs, 0);
-            result =__Pyx_PyFunction_FastCallNoKw(co, args, Py_SIZE(argdefs), globals);
-            goto done;
-        }
-    }
-    if (kwargs != NULL) {
-        Py_ssize_t pos, i;
-        kwtuple = PyTuple_New(2 * nk);
-        if (kwtuple == NULL) {
-            result = NULL;
-            goto done;
-        }
-        k = &PyTuple_GET_ITEM(kwtuple, 0);
-        pos = i = 0;
-        while (PyDict_Next(kwargs, &pos, &k[i], &k[i+1])) {
-            Py_INCREF(k[i]);
-            Py_INCREF(k[i+1]);
-            i += 2;
-        }
-        nk = i / 2;
-    }
-    else {
-        kwtuple = NULL;
-        k = NULL;
-    }
-    closure = PyFunction_GET_CLOSURE(func);
-#if PY_MAJOR_VERSION >= 3
-    kwdefs = PyFunction_GET_KW_DEFAULTS(func);
-#endif
-    if (argdefs != NULL) {
-        d = &PyTuple_GET_ITEM(argdefs, 0);
-        nd = Py_SIZE(argdefs);
-    }
-    else {
-        d = NULL;
-        nd = 0;
-    }
-#if PY_MAJOR_VERSION >= 3
-    result = PyEval_EvalCodeEx((PyObject*)co, globals, (PyObject *)NULL,
-                               args, (int)nargs,
-                               k, (int)nk,
-                               d, (int)nd, kwdefs, closure);
-#else
-    result = PyEval_EvalCodeEx(co, globals, (PyObject *)NULL,
-                               args, (int)nargs,
-                               k, (int)nk,
-                               d, (int)nd, closure);
-#endif
-    Py_XDECREF(kwtuple);
-done:
-    Py_LeaveRecursiveCall();
-    return result;
-}
-#endif
-#endif
-
 /* PyObjectCall2Args */
   static CYTHON_UNUSED PyObject* __Pyx_PyObject_Call2Args(PyObject* function, PyObject* arg1, PyObject* arg2) {
     PyObject *args, *result = NULL;
@@ -21061,66 +21154,6 @@ done:
 done:
     return result;
 }
-
-/* PyObjectCallMethO */
-  #if CYTHON_COMPILING_IN_CPYTHON
-static CYTHON_INLINE PyObject* __Pyx_PyObject_CallMethO(PyObject *func, PyObject *arg) {
-    PyObject *self, *result;
-    PyCFunction cfunc;
-    cfunc = PyCFunction_GET_FUNCTION(func);
-    self = PyCFunction_GET_SELF(func);
-    if (unlikely(Py_EnterRecursiveCall((char*)" while calling a Python object")))
-        return NULL;
-    result = cfunc(self, arg);
-    Py_LeaveRecursiveCall();
-    if (unlikely(!result) && unlikely(!PyErr_Occurred())) {
-        PyErr_SetString(
-            PyExc_SystemError,
-            "NULL result without error in PyObject_Call");
-    }
-    return result;
-}
-#endif
-
-/* PyObjectCallOneArg */
-  #if CYTHON_COMPILING_IN_CPYTHON
-static PyObject* __Pyx__PyObject_CallOneArg(PyObject *func, PyObject *arg) {
-    PyObject *result;
-    PyObject *args = PyTuple_New(1);
-    if (unlikely(!args)) return NULL;
-    Py_INCREF(arg);
-    PyTuple_SET_ITEM(args, 0, arg);
-    result = __Pyx_PyObject_Call(func, args, NULL);
-    Py_DECREF(args);
-    return result;
-}
-static CYTHON_INLINE PyObject* __Pyx_PyObject_CallOneArg(PyObject *func, PyObject *arg) {
-#if CYTHON_FAST_PYCALL
-    if (PyFunction_Check(func)) {
-        return __Pyx_PyFunction_FastCall(func, &arg, 1);
-    }
-#endif
-    if (likely(PyCFunction_Check(func))) {
-        if (likely(PyCFunction_GET_FLAGS(func) & METH_O)) {
-            return __Pyx_PyObject_CallMethO(func, arg);
-#if CYTHON_FAST_PYCCALL
-        } else if (PyCFunction_GET_FLAGS(func) & METH_FASTCALL) {
-            return __Pyx_PyCFunction_FastCall(func, &arg, 1);
-#endif
-        }
-    }
-    return __Pyx__PyObject_CallOneArg(func, arg);
-}
-#else
-static CYTHON_INLINE PyObject* __Pyx_PyObject_CallOneArg(PyObject *func, PyObject *arg) {
-    PyObject *result;
-    PyObject *args = PyTuple_Pack(1, arg);
-    if (unlikely(!args)) return NULL;
-    result = __Pyx_PyObject_Call(func, args, NULL);
-    Py_DECREF(args);
-    return result;
-}
-#endif
 
 /* BytesEquals */
   static CYTHON_INLINE int __Pyx_PyBytes_Equals(PyObject* s1, PyObject* s2, int equals) {

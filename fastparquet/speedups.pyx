@@ -79,11 +79,7 @@ def pack_byte_array(list items):
         val = items[i]
         # `itemlen` should be >= 0, so no signed extension issues
         itemlen = PyBytes_GET_SIZE(val)
-        # TODO: (<int*> data)[0] = itemlen
-        data[0] = itemlen & 0xff
-        data[1] = (itemlen >> 8) & 0xff
-        data[2] = (itemlen >> 16) & 0xff
-        data[3] = (itemlen >> 24) & 0xff
+        (<int*> data)[0] = itemlen
         data += 4
         memcpy(data, PyBytes_AS_STRING(val), itemlen)
         data += itemlen
@@ -100,10 +96,11 @@ def unpack_byte_array(const unsigned char[::1] raw_bytes, Py_ssize_t n, const ch
     cdef:
         Py_ssize_t i = 0
         char* ptr = <char*>&raw_bytes[0]
-        int itemlen
+        int itemlen, bytecount
         np.ndarray[object, ndim=1] out = np.empty(n, dtype="object")
 
-    while i < n:
+    bytecount = raw_bytes.shape[0]
+    while i < n and bytecount > 0:
 
         itemlen = (<int*> ptr)[0]
         ptr += 4
@@ -111,7 +108,9 @@ def unpack_byte_array(const unsigned char[::1] raw_bytes, Py_ssize_t n, const ch
             out[i] = PyUnicode_DecodeUTF8(ptr, itemlen, "ignore")
         else:
             out[i] = PyBytes_FromStringAndSize(ptr, itemlen)
+        print(out[i])
         ptr += itemlen
+        bytecount -= 4 + itemlen
         i += 1
 
     return out
