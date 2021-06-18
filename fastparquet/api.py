@@ -7,11 +7,12 @@ import struct
 import numpy as np
 import fsspec
 from fastparquet.util import join_path
+import pandas as pd
 
 from .core import read_thrift
 from .thrift_structures import parquet_thrift
 from . import core, schema, converted_types, encoding, dataframe
-from .util import (default_open, ParquetException, val_to_num,
+from .util import (default_open, ParquetException, val_to_num, ops,
                    ensure_bytes, check_column_names, metadata_from_many,
                    ex_from_sep, json_decoder)
 
@@ -214,18 +215,21 @@ class ParquetFile(object):
         paths = [rg.columns[0].file_path or "" for rg in self.row_groups if rg.columns]
         self.file_scheme, self.cats = paths_to_cats(paths, self.partition_meta)
 
-    def head(self, nrows, columns=None):
+    def head(self, nrows, **kwargs):
         """Get the first nrows of data
 
         This will load the whole of the first valid row-group for the
         given columns. If it has fewer rows than requested, we will not
         fetch more data.
 
+        kwargs can include things like columns, filters, etc., with
+        the same semantics as to_pandas()
+
         returns: dataframe
         """
         # TODO: implement with truncated assign and early exit
         #  from reading
-        return self[:1].to_pandas(columns=columns).head(nrows)
+        return self[:1].to_pandas(**kwargs).head(nrows)
 
     def __getitem__(self, item):
         """Select among the row-groups using integer/slicing"""
@@ -251,102 +255,64 @@ class ParquetFile(object):
             return self.fn
 
     def read_row_group_file(self, rg, columns, categories, index=None,
-                            assign=None, partition_meta=None):
-        """ Open file for reading, and process it as a row-group """
+                            assign=None, partition_meta=None, row_filter=False,
+                            infile=None):
+        """ Open file for reading, and process it as a row-group
+
+        assign is None if this method is called directly (not from to_pandas),
+        in which case we return the resultant dataframe
+
+        row_filter can be:
+        - False (don't do row filtering)
+        - a list of filters (do filtering here for this one row-group;
+          only makes sense if assign=None
+        - bool array with a size equal to the number of rows in this group
+          and the length of the assign arrays
+        """
         categories = self.check_categories(categories)
         fn = self.row_group_filename(rg)
         ret = False
         if assign is None:
+            if row_filter and isinstance(row_filter, list):
+                cs = self._columns_from_filters(row_filter)
+                df = self.read_row_group_file(
+                    rg, cs, index=False, infile=infile, row_filter=False)
+                row_filter = self._column_filter(df, filters=row_filter)
+                size = row_filter.sum()
+                if size == rg.num_rows:
+                    row_filter = False
+            else:
+                size = rg.num_rows
             df, assign = self.pre_allocate(
-                    rg.num_rows, columns, categories, index)
+                    size, columns, categories, index)
             ret = True
-        core.read_row_group_file(
-                fn, rg, columns, categories, self.schema, self.cats,
-                open=self.open, selfmade=self.selfmade, index=index,
-                assign=assign, scheme=self.file_scheme, partition_meta=partition_meta)
-        if ret:
-            return df
+        f = infile or self.open(fn, mode='rb')
 
-    def read_row_group(self, rg, columns, categories, infile=None,
-                       index=None, assign=None):
-        """
-        Access row-group in a file and read some columns into a data-frame.
-        """
-        categories = self.check_categories(categories)
-        ret = False
-        if assign is None:
-            df, assign = self.pre_allocate(rg.num_rows, columns,
-                                           categories, index)
-            ret = True
         core.read_row_group(
-                infile, rg, columns, categories, self.schema, self.cats,
-                self.selfmade, index=index, assign=assign,
-                scheme=self.file_scheme)
+            f, rg, columns, categories, self.schema, self.cats,
+            selfmade=self.selfmade, index=index,
+            assign=assign, scheme=self.file_scheme, partition_meta=partition_meta,
+            row_filter=row_filter
+        )
         if ret:
             return df
 
-    def iter_row_groups(self, columns=None, categories=None, filters=[],
-                        index=None):
+    def iter_row_groups(self, filters=None, **kwargs):
         """
-        Read data from parquet into a Pandas dataframe.
+        Iterate a dataset by row-groups
 
-        Parameters
-        ----------
-        columns: list of names or `None`
-            Column to load (see `ParquetFile.columns`). Any columns in the
-            data not in this list will be ignored. If `None`, read all columns.
-        categories: list, dict or `None`
-            If a column is encoded using dictionary encoding in every row-group
-            and its name is also in this list, it will generate a Pandas
-            Category-type column, potentially saving memory and time. If a
-            dict {col: int}, the value indicates the number of categories,
-            so that the optimal data-dtype can be allocated. If ``None``,
-            will automatically set *if* the data was written by fastparquet.
-        filters: list of list of tuples or list of tuples
-            To filter out (i.e., not read) some of the row-groups.
-            (This is not row-level filtering)
-            Filter syntax: [[(column, op, val), ...],...]
-            where op is [==, >, >=, <, <=, !=, in, not in]
-            The innermost tuples are transposed into a set of filters applied
-            through an `AND` operation.
-            The outer list combines these sets of filters through an `OR`
-            operation.
-            A single list of tuples can also be used, meaning that no `OR`
-            operation between set of filters is to be conducted.
-        index: string or list of strings or False or None
-            Column(s) to assign to the (multi-)index. If None, index is
-            inferred from the metadata (if this was originally pandas data); if
-            the metadata does not exist or index is False, index is simple
-            sequential integers.
-        assign: dict {cols: array}
-            Pre-allocated memory to write to. If None, will allocate memory
-            here.
+        If filters is given, omits row-groups that fail the filer
+        (saving execution time)
 
         Returns
         -------
-        Generator yielding one Pandas data-frame per row-group
+        Generator yielding one Pandas data-frame per row-group.
         """
-        index = self._get_index(index)
-        columns = columns or self.columns
-        if index:
-            columns += [i for i in index if i not in columns]
-        check_column_names(self.columns, columns, categories)
         rgs = filter_row_groups(self, filters) if filters else self.row_groups
-        if all(column.file_path is None for rg in rgs
-               for column in rg.columns):
-            with self.open(self.fn, 'rb') as f:
-                for rg in rgs:
-                    df, views = self.pre_allocate(rg.num_rows, columns,
-                                                  categories, index)
-                    self.read_row_group(rg, columns, categories, infile=f,
-                                        index=index, assign=views)
-                    yield df
-        else:
-            for rg in rgs:
-                df, views = self.pre_allocate(rg.num_rows, columns,
-                                              categories, index)
-                self.read_row_group_file(rg, columns, categories, index,
-                                         assign=views)
+        for rg in rgs:
+            i = self.row_groups.index(rg)
+            df = self[i].to_pandas(filters=filters, **kwargs)
+            if not df.empty:
                 yield df
 
     def _get_index(self, index=None):
@@ -357,8 +323,48 @@ class ParquetFile(object):
             index = [index]
         return index
 
+    def _columns_from_filters(self, filters):
+        return [
+            c for c in
+            set(sum([[f[0]]
+                     if isinstance(f[0], str)
+                     else [g[0] for g in f] for f in filters], []))
+            if c not in self.cats
+        ]
+
+    def _column_filter(self, df, filters):
+        out = np.zeros(len(df), dtype=bool)
+        for or_part in filters:
+            if isinstance(or_part[0], str):
+                name, op, val = or_part
+                if name in self.cats:
+                    continue
+                if op == 'in':
+                    out |= df[name].isin(val).values
+                elif op == "not in":
+                    out |= ~df[name].isin(val).values
+                elif op in ops:
+                    out |= ops[op](df[name], val).values
+                elif op == "~":
+                    out |= ~df[name].values
+            else:
+                and_part = np.ones(len(df), dtype=bool)
+                for name, op, val in or_part:
+                    if name in self.cats:
+                        continue
+                    if op == 'in':
+                        and_part &= df[name].isin(val).values
+                    elif op == "not in":
+                        and_part &= ~df[name].isin(val).values
+                    elif op in ops:
+                        and_part &= ops[op](df[name].values, val)
+                    elif op == "~":
+                        and_part &= ~df[name].values
+                out |= and_part
+        return out
+
     def to_pandas(self, columns=None, categories=None, filters=[],
-                  index=None):
+                  index=None, row_filter=False):
         """
         Read data from parquet into a Pandas dataframe.
 
@@ -375,10 +381,9 @@ class ParquetFile(object):
             so that the optimal data-dtype can be allocated. If ``None``,
             will automatically set *if* the data was written from pandas.
         filters: list of list of tuples or list of tuples
-            To filter out (i.e., not read) some of the row-groups.
-            (This is not row-level filtering)
+            To filter out data.
             Filter syntax: [[(column, op, val), ...],...]
-            where op is [==, >, >=, <, <=, !=, in, not in]
+            where op is [==, =, >, >=, <, <=, !=, in, not in]
             The innermost tuples are transposed into a set of filters applied
             through an `AND` operation.
             The outer list combines these sets of filters through an `OR`
@@ -390,6 +395,12 @@ class ParquetFile(object):
             inferred from the metadata (if this was originally pandas data); if
             the metadata does not exist or index is False, index is simple
             sequential integers.
+        row_filter: bool
+            Whether filters are applied to whole row-groups (False, default)
+            or row-wise (True, experimental). The latter requires two passes of
+            any row group that may contain valid rows, but can be much more
+            memory-efficient, especially if the filter columns are not required
+            in the output.
 
         Returns
         -------
@@ -401,34 +412,51 @@ class ParquetFile(object):
         if columns is not None:
             columns = columns[:]
         else:
-            columns = self.columns
+            columns = self.columns + list(self.cats)
         if index:
             columns += [i for i in index if i not in columns]
         check_column_names(self.columns + list(self.cats), columns, categories)
+        if filters and row_filter:
+            # TODO: special case when filter columns are also in output
+            cs = self._columns_from_filters(filters)
+            df = self.to_pandas(columns=cs, filters=filters, row_filter=False,
+                                index=False)
+            sel = self._column_filter(df, filters=filters)
+            size = sel.sum()
+            selected = []
+            start = 0
+            for rg in rgs[:]:
+                selected.append(sel[start:start+rg.num_rows])
+                start += rg.num_rows
+        else:
+            selected = [None] * len(rgs)  # just to fill zip, below
         df, views = self.pre_allocate(size, columns, categories, index)
         start = 0
         if self.file_scheme == 'simple':
-            with self.open(self.fn, 'rb') as f:
-                for rg in rgs:
-                    parts = {name: (v if name.endswith('-catdef')
-                                    else v[start:start + rg.num_rows])
-                             for (name, v) in views.items()}
-                    self.read_row_group(rg, columns, categories, infile=f,
-                                        index=index, assign=parts)
-                    start += rg.num_rows
+            infile = self.open(self.fn, 'rb')
         else:
-            for rg in rgs:
-                parts = {name: (v if name.endswith('-catdef')
-                                else v[start:start + rg.num_rows])
-                         for (name, v) in views.items()}
-                self.read_row_group_file(rg, columns, categories, index,
-                                         assign=parts, partition_meta=self.partition_meta)
-                start += rg.num_rows
+            infile = None
+        for rg, sel in zip(rgs, selected):
+            thislen = sel.sum() if sel is not None else rg.num_rows
+            if thislen == rg.num_rows:
+                # all good; noop if no row filtering
+                sel = None
+            elif thislen == 0:
+                # no valid rows
+                continue
+            parts = {name: (v if name.endswith('-catdef')
+                            else v[start:start + thislen])
+                     for (name, v) in views.items()}
+            self.read_row_group_file(rg, columns, categories, index,
+                                     assign=parts, partition_meta=self.partition_meta,
+                                     row_filter=sel, infile=infile)
+            start += thislen
         return df
 
     def pre_allocate(self, size, columns, categories, index):
         categories = self.check_categories(categories)
-        df, arrs = _pre_allocate(size, columns, categories, index, self.cats,
+        cats = {k: v for k, v in self.cats.items() if k in columns}
+        df, arrs = _pre_allocate(size, columns, categories, index, cats,
                                  self._dtypes(categories), self.tz)
         i_no_name = re.compile(r"__index_level_\d+__")
         if self.has_pandas_metadata:
@@ -456,16 +484,26 @@ class ParquetFile(object):
                 df.index.names = names
         return df, arrs
 
-    @property
-    def count(self):
-        """ Total number of rows """
-        return sum(rg.num_rows for rg in self.row_groups)
+    def count(self, filters=None, row_filter=False):
+        """ Total number of rows
+
+        filters and row_filters have the same meaning as in to_pandas. Unless both are given,
+        this method will not need to decode any data
+        """
+        if row_filter:
+            cs = self._columns_from_filters(filters)
+            df = self.to_pandas(columns=cs, filters=filters, row_filter=False,
+                                index=False)
+            return self._column_filter(df, filters=filters).sum()
+
+        rgs = filter_row_groups(self, filters)
+        return sum(rg.num_rows for rg in rgs)
 
     @property
     def info(self):
         """ Some dataset summary """
         return {'name': self.fn, 'columns': self.columns,
-                'partitions': list(self.cats), 'rows': self.count,
+                'partitions': list(self.cats), 'rows': self.count(),
                 "row_groups": len(self.row_groups)}
 
     def check_categories(self, cats):
@@ -894,12 +932,12 @@ def filter_row_groups(pf, filters, as_idx: bool = False):
     -------
     Filtered list of row groups (or row group indexes)
     """
-    if isinstance(filters[0][0], str):
-        # If 2nd level is already a column name, then transform
-        # `filters` into a list (OR condition) of list (AND condition)
-        # of filters (tuple or list with 1st component being a column
-        # name).
-        filters = [filters]
+    filters = filters or [[]]
+    # If 2nd level is already a column name, then transform
+    # `filters` into a list (OR condition) of list (AND condition)
+    # of filters (tuple or list with 1st component being a column
+    # name).
+    filters = [[filt] if filt and isinstance(filt[0], str) else filt for filt in filters]
     # Retrieve all column names onto which are applied filters, and check they
     # are existing columns of the dataset.
     as_cols = pf.columns + list(pf.cats.keys())
@@ -908,7 +946,7 @@ def filter_row_groups(pf, filters, as_idx: bool = False):
         falses = [i for i, x in enumerate(known) if not x]
         cols_in_filter = [ands[0] for ors in filters for ands in ors]
         wrong_cols = {cols_in_filter[i] for i in falses}
-        raise ValueError('No filter can be applied on unexisting column(s) \
+        raise ValueError('No filter can be applied on nonexistent column(s) \
 {!s}.'.format(wrong_cols))
     if as_idx:
         return [i for i, rg in enumerate(pf.row_groups) if any([

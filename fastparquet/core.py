@@ -10,7 +10,7 @@ from . import encoding
 from . encoding import read_plain
 import fastparquet.cencoding as encoding
 from .compression import decompress_data, rev_map, decom_into
-from .converted_types import convert, typemap, converts_inplace
+from .converted_types import convert, simple, converts_inplace
 from .schema import _is_list_like, _is_map_like
 from .speedups import unpack_byte_array
 from .thrift_structures import parquet_thrift, read_thrift
@@ -193,7 +193,8 @@ def read_dictionary_page(file_obj, schema_helper, page_header, column_metadata, 
 
 
 def read_data_page_v2(infile, schema_helper, se, data_header2, cmd,
-                      dic, assign, num, use_cat, file_offset, ph, idx=None):
+                      dic, assign, num, use_cat, file_offset, ph, idx=None,
+                      selfmade=False):
     """
     :param infile: open file
     :param schema_helper:
@@ -224,49 +225,60 @@ def read_data_page_v2(infile, schema_helper, se, data_header2, cmd,
                                      parquet_thrift.Encoding.DELTA_BINARY_PACKED
                                      ]:
         raise NotImplementedError
-    size = ph.compressed_page_size
-    max_rep = schema_helper.max_repetition_level(cmd.path_in_schema)
+    size = (ph.compressed_page_size - data_header2.repetition_levels_byte_length -
+            data_header2.definition_levels_byte_length)
     data = infile.tell() + data_header2.definition_levels_byte_length + data_header2.repetition_levels_byte_length
     n_values = data_header2.num_values - data_header2.num_nulls
+
+    max_rep = schema_helper.max_repetition_level(cmd.path_in_schema)
     if max_rep:
+        # TODO: probably not functional
         bit_width = encoding.width_from_max_int(max_rep)
         io_obj = encoding.NumpyIO(infile.read(data_header2.repetition_levels_byte_length))
         repi = np.empty(data_header2.num_values, dtype="uint8")
         encoding.read_rle_bit_packed_hybrid(io_obj, bit_width, data_header2.num_values,
                                             encoding.NumpyIO(repi), itemsize=1)
-        size -= data_header2.repetition_levels_byte_length
 
     max_def = schema_helper.max_definition_level(cmd.path_in_schema)
     if max_def and data_header2.num_nulls:
         bit_width = encoding.width_from_max_int(max_def)
+        # not the same as read_data(), because we know the length
         io_obj = encoding.NumpyIO(infile.read(data_header2.definition_levels_byte_length))
         defi = np.empty(data_header2.num_values, dtype="uint8")
         encoding.read_rle_bit_packed_hybrid(io_obj, bit_width, data_header2.num_values,
                                             encoding.NumpyIO(defi), itemsize=1)
+        # TODO: for RLE read, could pass defi and max_def to unpacker, save on the copy
         nulls = defi != max_def
-        size -= data_header2.definition_levels_byte_length
-    else:
-        infile.seek(data)
+    infile.seek(data)
 
-    into0 = ((use_cat or converts_inplace(se)) and data_header2.num_nulls == 0
-             and max_rep == 0)
+    # input and output element sizes match
+    see = se.type_length == assign.dtype.itemsize * 8 or simple.get(se.type).itemsize == assign.dtype.itemsize
+    # can read-into
+    into0 = ((use_cat or converts_inplace(se) and see)
+             and data_header2.num_nulls == 0
+             and max_rep == 0 and assign.dtype.kind != "O")
+    # can decompress-into
     into = (data_header2.is_compressed and rev_map[cmd.codec] in decom_into
             and into0)
 
-    if into and into0 and data_header2.encoding == parquet_thrift.Encoding.PLAIN:
-        # PLAIN decompress directly into output
-        decomp = decom_into[rev_map[cmd.codec]]
-        decomp(infile.read(ph.compressed_page_size), assign[num:num+data_header2.num_values])
+    uncompressed_page_size = (ph.uncompressed_page_size - data_header2.definition_levels_byte_length -
+                              data_header2.repetition_levels_byte_length)
     if into0 and data_header2.encoding == parquet_thrift.Encoding.PLAIN and (
-        not data_header2.is_compressed or cmd.codec == parquet_thrift.CompressionCodec.UNCOMPRESSED
+            not data_header2.is_compressed or cmd.codec == parquet_thrift.CompressionCodec.UNCOMPRESSED
     ):
         # PLAIN read directly into output (a copy for remote files)
-        infile.read_into(size, assign[num:num+n_values])
+        infile.readinto(assign[num:num+n_values].view('uint8'))
+        convert(assign[num:num+n_values], se)
+    elif into and data_header2.encoding == parquet_thrift.Encoding.PLAIN:
+        # PLAIN decompress directly into output
+        decomp = decom_into[rev_map[cmd.codec]]
+        decomp(infile.read(size), assign[num:num+data_header2.num_values].view('uint8'))
+        convert(assign[num:num+n_values], se)
     elif data_header2.encoding == parquet_thrift.Encoding.PLAIN:
         # PLAIN, but with nulls or not in-place conversion
         codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
         raw_bytes = decompress_data(infile.read(size),
-                                    ph.uncompressed_page_size, codec)
+                                    uncompressed_page_size, codec)
         values = read_plain(raw_bytes,
                             cmd.type,
                             n_values,
@@ -277,28 +289,57 @@ def read_data_page_v2(infile, schema_helper, se, data_header2, cmd,
             assign[num:num+data_header2.num_values][~nulls] = convert(values, se)
         else:
             assign[num:num+data_header2.num_values] = convert(values, se)
-    elif (into0 and use_cat and data_header2.encoding in [
+    elif (use_cat and data_header2.encoding in [
         parquet_thrift.Encoding.PLAIN_DICTIONARY,
         parquet_thrift.Encoding.RLE_DICTIONARY,
-    ]) or (into0 and data_header2.encoding == parquet_thrift.Encoding.RLE):
+    ]) or (data_header2.encoding == parquet_thrift.Encoding.RLE):
         # DICTIONARY or BOOL direct decode RLE into output (no nulls)
         codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
-        compressed_bytes = infile.read(size)
-        raw_bytes = decompress_data(compressed_bytes, ph.uncompressed_page_size, codec)
+        raw_bytes = np.empty(size, dtype='uint8')
+        # TODO: small improvement possible by file.readinto and decompress_into if we
+        #  don't first read raw_bytes but seek in the open file
+        infile.readinto(raw_bytes)
+        raw_bytes = decompress_data(raw_bytes, uncompressed_page_size, codec)
         pagefile = encoding.NumpyIO(raw_bytes)
-        if data_header2.encoding == parquet_thrift.Encoding.RLE:
-            # bool
-            bit_width = 1
-            pagefile.seek(4, 1)  # we don't actually need the length!
-        else:
+        if data_header2.encoding != parquet_thrift.Encoding.RLE:
+            # TODO: check this bit; is the varint read only row byte-exact fastpath?
             bit_width = pagefile.read_byte()
-        encoding.read_rle_bit_packed_hybrid(
-            pagefile,
-            bit_width,
-            ph.uncompressed_page_size,
-            encoding.NumpyIO(assign[num:num+data_header2.num_values]),
-            itemsize=1
-        )
+            encoding.read_unsigned_var_int(pagefile)
+        else:
+            bit_width = 1
+            pagefile.seek(4, 1)
+        if bit_width in [8, 16, 32] and selfmade:
+            # special fastpath for cats
+            outbytes = raw_bytes[pagefile.tell():]
+            if len(outbytes) == assign[num:num+data_header2.num_values].nbytes:
+                assign[num:num+data_header2.num_values].view('uint8')[:] = outbytes
+            else:
+                if data_header2.num_nulls == 0:
+                    assign[num:num+data_header2.num_values][:] = outbytes
+                else:
+                    assign[num:num+data_header2.num_values][~nulls] = outbytes
+                    assign[num:num+data_header2.num_values][nulls] = -1
+        else:
+            if data_header2.num_nulls == 0:
+                encoding.read_rle_bit_packed_hybrid(
+                    pagefile,
+                    bit_width,
+                    uncompressed_page_size,
+                    encoding.NumpyIO(assign[num:num+data_header2.num_values].view('uint8')),
+                    itemsize=bit_width
+                )
+            else:
+                temp = np.empty(data_header2.num_values, assign.dtype)
+                encoding.read_rle_bit_packed_hybrid(
+                    pagefile,
+                    bit_width,
+                    uncompressed_page_size,
+                    encoding.NumpyIO(temp.view('uint8')),
+                    itemsize=bit_width
+                )
+                assign[num:num+data_header2.num_values][~nulls] = temp
+                assign[num:num+data_header2.num_values][nulls] = None
+
     elif data_header2.encoding in [
         parquet_thrift.Encoding.PLAIN_DICTIONARY,
         parquet_thrift.Encoding.RLE_DICTIONARY
@@ -306,22 +347,19 @@ def read_data_page_v2(infile, schema_helper, se, data_header2, cmd,
         # DICTIONARY to be de-referenced, with or without nulls
         codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
         compressed_bytes = infile.read(size)
-        raw_bytes = decompress_data(compressed_bytes, ph.uncompressed_page_size, codec)
+        raw_bytes = decompress_data(compressed_bytes, uncompressed_page_size, codec)
         out = np.empty(n_values, dtype='uint8')
         pagefile = encoding.NumpyIO(raw_bytes)
         bit_width = pagefile.read_byte()
         encoding.read_rle_bit_packed_hybrid(
             pagefile,
             bit_width,
-            ph.uncompressed_page_size,
+            uncompressed_page_size,
             encoding.NumpyIO(out),
             itemsize=1
         )
         if max_rep:
-            # num_rows got filled, but consumed num_values data entries; on the next page
-            # we don't know where we're up to
-            # example hardcodes that elements are required but whole rows are not
-            # and that we know there is no dict
+            # num_rows got filled, but consumed num_values data entries
             encoding._assemble_objects(
                 assign[idx[0]:idx[0]+data_header2.num_rows], defi, repi, out, dic, d=True,
                 null=True, null_val=False, max_defi=max_def, prev_i=0
@@ -333,9 +371,10 @@ def read_data_page_v2(infile, schema_helper, se, data_header2, cmd,
         else:
             assign[num:num+data_header2.num_values] = dic[out]
     elif data_header2.encoding == parquet_thrift.Encoding.DELTA_BINARY_PACKED:
+        assert data_header2.num_nulls == 0, "null delta-int not implemented"
         codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
         raw_bytes = decompress_data(infile.read(size),
-                                    ph.uncompressed_page_size, codec)
+                                    uncompressed_page_size, codec)
         if converts_inplace(se):
             encoding.delta_binary_unpack(
                 encoding.NumpyIO(raw_bytes),
@@ -349,15 +388,16 @@ def read_data_page_v2(infile, schema_helper, se, data_header2, cmd,
             )
             assign[num:num+data_header2.num_values] = convert(out, se)
     else:
-        codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
-        raw_bytes = decompress_data(infile.read(size),
-                                    ph.uncompressed_page_size, codec)
+        # codec = cmd.codec if data_header2.is_compressed else "UNCOMPRESSED"
+        # raw_bytes = decompress_data(infile.read(size),
+        #                             ph.uncompressed_page_size, codec)
         raise NotImplementedError
     return data_header2.num_values
 
 
 def read_col(column, schema_helper, infile, use_cat=False,
-             selfmade=False, assign=None, catdef=None):
+             selfmade=False, assign=None, catdef=None,
+             row_filter=None):
     """Using the given metadata, read one column in one row-group.
 
     Parameters
@@ -371,6 +411,10 @@ def read_col(column, schema_helper, infile, use_cat=False,
     use_cat: bool (False)
         If this column is encoded throughout with dict encoding, give back
         a pandas categorical column; otherwise, decode to values
+    row_filter: bool array or None
+        if given, selects which of the values read are to be written
+        into the output. Effectively implies NULLs, even for a required
+        column.
     """
     cmd = column.meta_data
     se = schema_helper.schema_element(cmd.path_in_schema)
@@ -378,7 +422,7 @@ def read_col(column, schema_helper, infile, use_cat=False,
                cmd.data_page_offset))
 
     infile.seek(off)
-    rows = cmd.num_values
+    rows = row_filter.sum() if isinstance(row_filter, np.ndarray) else cmd.num_values
 
     if use_cat:
         my_nan = -1
@@ -415,8 +459,10 @@ def read_col(column, schema_helper, infile, use_cat=False,
                                        (assign.dtype, len(dic)))
             continue
         if ph.type == parquet_thrift.PageType.DATA_PAGE_V2:
+            if isinstance(row_filter, np.ndarray):
+                raise NotImplementedError
             num += read_data_page_v2(infile, schema_helper, se, ph.data_page_header_v2, cmd,
-                                     dic, assign, num, use_cat, off, ph, row_idx)
+                                     dic, assign, num, use_cat, off, ph, row_idx, selfmade=selfmade)
             continue
         if (selfmade and hasattr(cmd, 'statistics') and
                 getattr(cmd.statistics, 'null_count', 1) == 0):
@@ -425,6 +471,10 @@ def read_col(column, schema_helper, infile, use_cat=False,
             skip_nulls = False
         defi, rep, val = read_data_page(infile, schema_helper, ph, cmd,
                                         skip_nulls, selfmade=selfmade)
+        if isinstance(row_filter, np.ndarray):
+            defi = defi[row_filter] if defi else defi
+            rep = rep[row_filter] if rep else rep
+            val = val[row_filter]
         if rep is not None and assign.dtype.kind != 'O':  # pragma: no cover
             # this should never get called
             raise ValueError('Column contains repeated value, must use object '
@@ -481,17 +531,8 @@ def read_col(column, schema_helper, infile, use_cat=False,
         num += len(defi) if defi is not None else len(val)
 
 
-def read_row_group_file(fn, rg, columns, categories, schema_helper, cats,
-                        open=open, selfmade=False, index=None, assign=None,
-                        scheme='hive', partition_meta=None):
-    with open(fn, mode='rb') as f:
-        return read_row_group(f, rg, columns, categories, schema_helper, cats,
-                              selfmade=selfmade, index=index, assign=assign,
-                              scheme=scheme, partition_meta=partition_meta)
-
-
 def read_row_group_arrays(file, rg, columns, categories, schema_helper, cats,
-                          selfmade=False, assign=None):
+                          selfmade=False, assign=None, row_filter=False):
     """
     Read a row group and return as a dict of arrays
 
@@ -513,7 +554,8 @@ def read_row_group_arrays(file, rg, columns, categories, schema_helper, cats,
 
         read_col(column, schema_helper, file, use_cat=name+'-catdef' in out,
                  selfmade=selfmade, assign=out[name],
-                 catdef=out.get(name+'-catdef', None))
+                 catdef=out.get(name+'-catdef', None),
+                 row_filter=row_filter)
 
         if _is_map_like(schema_helper, column):
             # TODO: could be done in fast loop in _assemble_objects?
@@ -531,7 +573,7 @@ def read_row_group_arrays(file, rg, columns, categories, schema_helper, cats,
 
 def read_row_group(file, rg, columns, categories, schema_helper, cats,
                    selfmade=False, index=None, assign=None,
-                   scheme='hive', partition_meta=None):
+                   scheme='hive', partition_meta=None, row_filter=False):
     """
     Access row-group in a file and read some columns into a data-frame.
     """
@@ -539,9 +581,12 @@ def read_row_group(file, rg, columns, categories, schema_helper, cats,
     if assign is None:
         raise RuntimeError('Going with pre-allocation!')
     read_row_group_arrays(file, rg, columns, categories, schema_helper,
-                          cats, selfmade, assign=assign)
+                          cats, selfmade, assign=assign, row_filter=row_filter)
 
     for cat in cats:
+        if cat not in assign:
+            # do no need to have partition columns in output
+            continue
         if scheme == 'hive':
             s = ex_from_sep('/')
             partitions = s.findall(rg.columns[0].file_path)

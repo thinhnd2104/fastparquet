@@ -26,7 +26,8 @@ cpdef void read_rle(NumpyIO file_obj, int32_t header, int32_t bit_width, NumpyIO
     value that's repeated. Yields the value repeated count times.
     """
     cdef:
-        int32_t count, width, i, data = 0, vals_left
+        uint32_t count, width, i, vals_left
+        int32_t data = 0
         char * inptr = file_obj.get_pointer()
         char * outptr = o.get_pointer()
     count = header >> 1
@@ -354,7 +355,7 @@ cdef class NumpyIO(object):
     cpdef int32_t tell(self):
         return self.loc
 
-    cpdef void seek(self, int32_t loc, int32_t whence=0):
+    cpdef uint32_t seek(self, int32_t loc, int32_t whence=0):
         if whence == 0:
             self.loc = loc
         elif whence == 1:
@@ -363,6 +364,7 @@ cdef class NumpyIO(object):
             self.loc = self.nbytes + loc
         if self.loc > self.nbytes:
             self.loc = self.nbytes
+        return self.loc
 
     @cython.wraparound(False)
     cpdef const uint8_t[:] so_far(self):
