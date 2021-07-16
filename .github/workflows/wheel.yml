@@ -19,8 +19,12 @@ jobs:
             architecture: 'x64'
             skip: "*2*win* *win32 pp*"
           - os: ubuntu-20.04
-            architecture: 'x64'
+            architecture: 'aarch64'
             linux_archs: aarch64
+            skip: "pp*"
+          - os: ubuntu-20.04
+            architecture: 'x64'
+            linux_archs: auto
             skip: "pp*"
 
     name: Python ${{ matrix.os }}
