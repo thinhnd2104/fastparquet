@@ -4,6 +4,9 @@ fastparquet
 .. image:: https://github.com/dask/fastparquet/actions/workflows/main.yaml/badge.svg
     :target: https://github.com/dask/fastparquet/actions/workflows/main.yaml
 
+.. image:: https://readthedocs.org/projects/fastparquet/badge/?version=latest
+    :target: https://fastparquet.readthedocs.io/en/latest/
+
 fastparquet is a python implementation of the `parquet
 format <https://github.com/apache/parquet-format>`_, aiming integrate
 into python-based big data work-flows. It is used implicitly by
