@@ -48,6 +48,12 @@ class ParquetFile(object):
         value. Use this to specify the dataset root directory, if required.
     fs: fsspec-compatible filesystem
         You can use this instead of open_with (otherwise, it will be inferred)
+    pandas_nulls: bool (True)
+        If True, columns that are int or bool in parquet, but have nulls, will become
+        pandas nullale types (Uint, Int, boolean). If False (the only behaviour
+        prior to v0.7.0), both kinds will be cast to float, and nulls will be NaN.
+        Pandas nullable types were introduces in v1.0.0, but were still marked as
+        experimental in v1.3.0.
 
     Attributes
     ----------
@@ -87,7 +93,8 @@ class ParquetFile(object):
     _categories = None
 
     def __init__(self, fn, verify=False, open_with=default_open,
-                 root=False, sep=None, fs=None):
+                 root=False, sep=None, fs=None, pandas_nulls=True):
+        self.pandas_nulls = pandas_nulls
         if isinstance(fn, (tuple, list)):
             basepath, fmd = metadata_from_many(fn, verify_schema=verify,
                                                open_with=open_with, root=root)
@@ -627,7 +634,10 @@ class ParquetFile(object):
                             num_nulls = True
                             break
                     if num_nulls:
-                        dtype[col] = converted_types.nullable[dt]
+                        if self.pandas_nulls:
+                            dtype[col] = converted_types.nullable[dt]
+                        else:
+                            dtype[col] = np.float_()
                 elif dt == 'S12':
                     dtype[col] = 'M8[ns]'
             self._base_dtype = dtype
