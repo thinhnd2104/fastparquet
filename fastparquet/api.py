@@ -231,18 +231,23 @@ class ParquetFile(object):
     def head(self, nrows, **kwargs):
         """Get the first nrows of data
 
-        This will load the whole of the first valid row-group for the
-        given columns. If it has fewer rows than requested, we will not
-        fetch more data.
+        This will load the whole of the first valid row-group for the given
+        columns.
 
-        kwargs can include things like columns, filters, etc., with
-        the same semantics as to_pandas()
+        kwargs can include things like columns, filters, etc., with the same
+        semantics as to_pandas(). If filters are applied, it may happen that
+        data is so reduced that 'nrows' is not ensured (fewer rows). 
 
         returns: dataframe
         """
         # TODO: implement with truncated assign and early exit
         #  from reading
-        return self[:1].to_pandas(**kwargs).head(nrows)
+        total_rows = 0
+        for i, rg in enumerate(self.row_groups):
+            total_rows += rg.num_rows
+            if total_rows >= nrows:
+                break
+        return self[:i+1].to_pandas(**kwargs).head(nrows)
 
     def __getitem__(self, item):
         """Select among the row-groups using integer/slicing"""
