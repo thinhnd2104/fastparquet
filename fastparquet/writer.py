@@ -1,3 +1,5 @@
+import time
+import uuid
 from copy import copy
 import json
 import os
@@ -997,7 +999,7 @@ part files. This situation is not allowed with use of `append='overwrite'`.")
         for i, start in enumerate(row_group_offsets):
             end = (row_group_offsets[i+1] if i < (len(row_group_offsets) - 1)
                    else None)
-            part = 'part.%i.parquet' % (i + i_offset)
+            part = f'part.%i-{uuid.uuid4()}-{int(time.time())}.parquet' % (i + i_offset)
             if partition_on:
                 rgs = partition_on_columns(
                     data[start:end], partition_on, filename, part, fmd,
